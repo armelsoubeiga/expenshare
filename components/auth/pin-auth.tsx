@@ -108,7 +108,7 @@ export function PinAuth({ onAuthSuccess }: PinAuthProps) {
       const userId = await db.users.add({
         name: userName,
         pin_hash: hashedPin,
-        created_at: new Date(),
+        created_at: new Date().toISOString(),
       })
       // Store current user in localStorage for session
       localStorage.setItem(
@@ -132,9 +132,10 @@ export function PinAuth({ onAuthSuccess }: PinAuthProps) {
         setIsLoading(false)
         onAuthSuccess()
       }, 500)
-    } catch (error) {
+    } catch (error: any) {
+      console.error('[PinAuth] Create user failed:', error)
       setIsLoading(false)
-      setError("Erreur lors de la création du compte")
+      setError(typeof error?.message === 'string' ? error.message : "Erreur lors de la création du compte")
     }
   }
 
@@ -187,9 +188,10 @@ export function PinAuth({ onAuthSuccess }: PinAuthProps) {
       )
       setIsLoading(false)
       onAuthSuccess()
-    } catch (error) {
+    } catch (error: any) {
+      console.error('[PinAuth] Login failed:', error)
       setIsLoading(false)
-      setError("Erreur lors de la connexion")
+      setError(typeof error?.message === 'string' ? error.message : "Erreur lors de la connexion")
     }
   }
 

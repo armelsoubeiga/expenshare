@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
+import { useToast } from "@/hooks/use-toast"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
@@ -44,6 +45,7 @@ const PROJECT_COLORS = [
 const PROJECT_ICONS = ["📁", "🏠", "🚗", "🛒", "🎯", "💼", "🎨", "🏖️", "🎓", "💡"]
 
 export function ProjectSettingsForm({ isOpen, onClose, onSuccess, projectId, activeTab = "details" }: ProjectSettingsFormProps) {
+  const { toast } = useToast()
   const { db } = useDatabase()
   const [project, setProject] = useState<any>(null)
   const [projectUsers, setProjectUsers] = useState<any[]>([])
@@ -90,12 +92,15 @@ export function ProjectSettingsForm({ isOpen, onClose, onSuccess, projectId, act
       const projectData = await db.getProjectById(projectId)
       if (projectData) {
         setProject(projectData)
+        // Charger le code de devise et normaliser 'XOF' vers 'CFA'
+        const dbCurrency = (projectData.currency as string) || 'EUR'
+        const uiCurrency = dbCurrency === 'XOF' ? 'CFA' : dbCurrency
         setFormData({
           name: projectData.name,
           description: projectData.description || "",
           icon: projectData.icon,
           color: projectData.color,
-          currency: (projectData.currency as string) || "EUR",
+          currency: uiCurrency,
         })
       }
       
@@ -154,20 +159,27 @@ export function ProjectSettingsForm({ isOpen, onClose, onSuccess, projectId, act
         setError("Le nom du projet est obligatoire")
         return
       }
-      
-      // Mettre à jour les données du projet
-      const updated = await db.updateProject(projectId, {
+
+      // Mettre à jour les données du projet (enregistrer directement le code de devise choisi)
+      const updatedProject = await db.updateProject(projectId, {
         name: formData.name,
         description: formData.description,
         icon: formData.icon,
         color: formData.color,
         currency: formData.currency
       })
-      
-      if (updated) {
-        // Sauvegarder les taux de conversion projet si fournis
-        if (eurToCfa) await db.settings.put({ key: `project:${projectId}:eur_to_cfa`, value: eurToCfa })
-        if (eurToUsd) await db.settings.put({ key: `project:${projectId}:eur_to_usd`, value: eurToUsd })
+
+  if (updatedProject) {
+        // Sauvegarder les taux de conversion projet si fournis (ignorer si db.settings indisponible)
+        if (eurToCfa) {
+          try { await db.settings.put({ key: `project:${projectId}:eur_to_cfa`, value: eurToCfa }) } catch { /* skip */ }
+        }
+        if (eurToUsd) {
+          try { await db.settings.put({ key: `project:${projectId}:eur_to_usd`, value: eurToUsd }) } catch { /* skip */ }
+        }
+
+  // Recharger entièrement les données du projet (devise et taux) pour garantir la cohérence
+  await loadProjectData()
 
         // Notifier l'app du changement de devise projet
         const detail = {
@@ -178,9 +190,20 @@ export function ProjectSettingsForm({ isOpen, onClose, onSuccess, projectId, act
         }
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('expenshare:project-currency-changed', { detail }))
+          // Event pour rechargement général des données
+          window.dispatchEvent(new CustomEvent('expenshare:project-updated', { detail: { projectId } }))
         }
-        onSuccess()
-        onClose()
+
+        // Afficher un toast de succès
+        toast({
+          title: "Projet mis à jour",
+          description: "Les modifications ont été enregistrées avec succès.",
+          variant: "default"
+        })
+
+  // Fermer le formulaire et notifier le succès
+  onSuccess()
+  onClose()
       } else {
         setError("Erreur lors de la mise à jour du projet")
       }
@@ -315,10 +338,11 @@ export function ProjectSettingsForm({ isOpen, onClose, onSuccess, projectId, act
           </div>
         ) : (
           <Tabs defaultValue={currentTab} className="mt-4" onValueChange={setCurrentTab}>
-            <TabsList className="grid w-full grid-cols-3">
+            <TabsList className="grid w-full grid-cols-4">
               <TabsTrigger value="general">Général</TabsTrigger>
               <TabsTrigger value="categories">Catégories</TabsTrigger>
               <TabsTrigger value="users">Utilisateurs</TabsTrigger>
+              <TabsTrigger value="currency">Devise</TabsTrigger>
             </TabsList>
 
             {/* Onglet Général */}
@@ -332,7 +356,6 @@ export function ProjectSettingsForm({ isOpen, onClose, onSuccess, projectId, act
                     onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                   />
                 </div>
-
                 <div className="space-y-2">
                   <Label htmlFor="description">Description (optionnel)</Label>
                   <Textarea
@@ -341,7 +364,6 @@ export function ProjectSettingsForm({ isOpen, onClose, onSuccess, projectId, act
                     onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                   />
                 </div>
-
                 <div className="space-y-2">
                   <Label>Icône</Label>
                   <div className="flex flex-wrap gap-2">
@@ -353,13 +375,13 @@ export function ProjectSettingsForm({ isOpen, onClose, onSuccess, projectId, act
                         className={`text-2xl p-2 rounded-md ${
                           formData.icon === icon ? "bg-primary/20 ring-1 ring-primary" : "hover:bg-muted"
                         }`}
+                        aria-label={`Choisir l'icône ${icon}`}
                       >
                         {icon}
                       </button>
                     ))}
                   </div>
                 </div>
-
                 <div className="space-y-2">
                   <Label>Couleur</Label>
                   <div className="flex flex-wrap gap-2">
@@ -368,62 +390,66 @@ export function ProjectSettingsForm({ isOpen, onClose, onSuccess, projectId, act
                         key={color.value}
                         type="button"
                         onClick={() => setFormData({ ...formData, color: color.value })}
-                        className={`w-8 h-8 rounded-full ${color.bg} ${
-                          formData.color === color.value ? "ring-2 ring-offset-2 ring-primary" : ""
+                        className={`w-7 h-7 rounded-full border-2 ${
+                          formData.color === color.value ? "border-primary ring-2 ring-primary" : "border-muted"
                         }`}
+                        style={{ backgroundColor: color.value }}
+                        aria-label={`Choisir la couleur ${color.name}`}
                       />
                     ))}
                   </div>
                 </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="currency">Devise</Label>
-                  <Select
-                    value={formData.currency}
-                    onValueChange={(value) => setFormData({ ...formData, currency: value })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Choisir une devise" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {CURRENCIES.map((currency) => (
-                        <SelectItem key={currency.code} value={currency.code}>
-                          {currency.symbol} - {currency.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {/* Taux de conversion projet: 1 € = … */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div className="space-y-2">
-                    <Label>1 € = (CFA)</Label>
-                    <Input
-                      type="number"
-                      inputMode="decimal"
-                      placeholder="655.957"
-                      value={eurToCfa}
-                      onChange={(e) => setEurToCfa(e.target.value)}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>1 € = (USD)</Label>
-                    <Input
-                      type="number"
-                      inputMode="decimal"
-                      placeholder="1.08"
-                      value={eurToUsd}
-                      onChange={(e) => setEurToUsd(e.target.value)}
-                    />
-                  </div>
-                </div>
-
-                <Button onClick={handleSaveProject} disabled={isLoading} className="mt-4">
-                  {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-                  Enregistrer les modifications
-                </Button>
               </div>
+            </TabsContent>
+
+                  {/* Onglet Devise */}
+                  <TabsContent value="currency" className="space-y-4 py-4">
+                <div className="space-y-4">
+                  <div>
+                    <Label>Devise</Label>
+                    <Select
+                      value={formData.currency}
+                      onValueChange={value => setFormData({ ...formData, currency: value })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Sélectionner une devise" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {CURRENCIES.map(currency => (
+                          <SelectItem key={currency.code} value={currency.code}>
+                            {currency.symbol} - {currency.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex gap-2 mt-2">
+                    <div className="flex-1">
+                      <Label>1 € = (CFA)</Label>
+                      <Input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={eurToCfa}
+                        onChange={e => setEurToCfa(e.target.value)}
+                      />
+                    </div>
+                    <div className="flex-1">
+                      <Label>1 € = (USD)</Label>
+                      <Input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={eurToUsd}
+                        onChange={e => setEurToUsd(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                  <Button onClick={handleSaveProject} disabled={isLoading} className="mt-4">
+                    {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                    Enregistrer les modifications
+                  </Button>
+                </div>
             </TabsContent>
 
             {/* Onglet Catégories */}

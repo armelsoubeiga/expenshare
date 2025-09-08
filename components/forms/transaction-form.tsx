@@ -1,6 +1,7 @@
 "use client"
 
 import React, { useState, useEffect, useRef } from "react"
+import { useToast } from "@/hooks/use-toast"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -21,6 +22,7 @@ interface TransactionFormProps {
 }
 
 export function TransactionForm({ isOpen, onClose, onSuccess }: TransactionFormProps) {
+  const { toast } = useToast()
   const { db } = useDatabase()
   const [projects, setProjects] = useState<any[]>([])
   const [categories, setCategories] = useState<any[]>([])
@@ -32,6 +34,9 @@ export function TransactionForm({ isOpen, onClose, onSuccess }: TransactionFormP
     title: "",
     description: "",
   })
+  // Devise dynamique selon le projet sélectionné (après formData)
+  const selectedProject = projects.find(p => String(p.id) === formData.projectId)
+  const projectCurrency = selectedProject?.currency || "€"
   const [mediaFiles, setMediaFiles] = useState<MediaFile[]>([])
   const audioUploadRef = useRef<MediaUploadHandle | null>(null)
   const [showDescriptionDialog, setShowDescriptionDialog] = useState(false)
@@ -72,7 +77,7 @@ export function TransactionForm({ isOpen, onClose, onSuccess }: TransactionFormP
     try {
       // Récupérer l'utilisateur courant
       const currentUserData = JSON.parse(localStorage.getItem("expenshare_current_user") || "{}")
-      const currentUser = await db.getUserByName(currentUserData.name)
+      const currentUser = await db.users.getByName(currentUserData.name)
 
       if (!currentUser) return
 
@@ -129,12 +134,12 @@ export function TransactionForm({ isOpen, onClose, onSuccess }: TransactionFormP
       if (!db) throw new Error("Base de données non disponible")
 
       const currentUserData = JSON.parse(localStorage.getItem("expenshare_current_user") || "{}")
-      const currentUser = await db.getUserByName(currentUserData.name)
+  const currentUser = await db.users.getByName(currentUserData.name)
 
       if (!currentUser) throw new Error("Utilisateur non trouvé")
 
       // Créer la transaction avec uniquement la description saisie (texte pur)
-      const transactionId = await db.createTransaction({
+  const transactionId = await db.transactions.add({
         project_id: Number.parseInt(formData.projectId),
         user_id: currentUser.id!,
         category_id: formData.categoryId ? Number.parseInt(formData.categoryId) : null,
@@ -157,27 +162,25 @@ export function TransactionForm({ isOpen, onClose, onSuccess }: TransactionFormP
         }
         // Médias
         for (const media of mediaFiles) {
-          // Convertir en data URL pour stockage texte portable
-          let dataUrl = media.url
-          if (!dataUrl && media.blob) {
-            dataUrl = await new Promise<string>((resolve, reject) => {
-              const reader = new FileReader()
-              reader.onload = () => resolve(String(reader.result))
-              reader.onerror = () => reject(new Error("Failed to read file"))
-              reader.readAsDataURL(media.blob!)
-            })
-          }
+          // On stocke l'URL publique du média (déjà uploadé via MediaUpload)
           await db.notes.add({
             transaction_id: transactionId,
             content_type: media.type === "image" ? "image" : media.type === "audio" ? "audio" : "text",
-            content: dataUrl || media.name,
+            content: media.url, // URL publique
             file_path: media.name,
           } as any)
         }
       }
 
       onSuccess()
-      onClose()
+      toast({
+        title: "Transaction enregistrée",
+        description: "Votre dépense a bien été ajoutée.",
+        variant: "success"
+      })
+      setTimeout(() => {
+        onClose()
+      }, 1200)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erreur lors de la création de la transaction")
     } finally {
@@ -315,7 +318,7 @@ export function TransactionForm({ isOpen, onClose, onSuccess }: TransactionFormP
                       required
                       className="pr-8"
                     />
-                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">€</span>
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">{projectCurrency}</span>
                   </div>
                 </div>
 

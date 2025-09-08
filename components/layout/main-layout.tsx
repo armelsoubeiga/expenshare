@@ -56,10 +56,7 @@ export function MainLayout({ onLogout }: MainLayoutProps) {
     }
   }
 
-  if (!isReady) {
-    return <LoadingPage />
-  }
-
+  // Montre l'erreur en priorité, sinon on reste bloqué sur le spinner
   if (error) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-4">
@@ -75,6 +72,10 @@ export function MainLayout({ onLogout }: MainLayoutProps) {
         </div>
       </div>
     )
+  }
+
+  if (!isReady) {
+    return <LoadingPage />
   }
 
   return (

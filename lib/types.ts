@@ -2,7 +2,7 @@
 
 // Database schema types
 export interface User {
-  id?: number
+  id?: string
   name: string
   pin_hash: string
   created_at?: Date | string
@@ -15,14 +15,14 @@ export interface Project {
   icon: string
   color: string
   currency: string
-  created_by: number
+  created_by: string | number
   created_at?: Date | string
   role?: string // Pour les requêtes JOIN
 }
 
 export interface ProjectUser {
   project_id: number
-  user_id: number
+  user_id: string | number
   role: string
   added_at?: Date | string
 }
@@ -39,7 +39,7 @@ export interface Category {
 export interface Transaction {
   id?: number
   project_id: number
-  user_id: number
+  user_id: string | number
   category_id?: number | null
   type: "expense" | "budget"
   amount: number

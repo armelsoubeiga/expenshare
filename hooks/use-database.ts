@@ -108,25 +108,25 @@ export function useUserProjects(userId: number) {
   const [isLoading, setIsLoading] = useState(true)
   const { isReady, db } = useDatabase()
 
-  useEffect(() => {
-    if (!isReady || !userId) return
-
-    const loadProjects = async () => {
-      try {
-  if (!db) return
-  const userProjects = await db.getUserProjects(userId)
-        setProjects(userProjects)
-      } catch (error) {
-        console.error("Failed to load user projects:", error)
-      } finally {
-        setIsLoading(false)
-      }
+  // Déclare la fonction de chargement en dehors du useEffect pour pouvoir l'utiliser dans refetch
+  const loadProjects = async () => {
+    if (!isReady || !db || !userId) return
+    setIsLoading(true)
+    try {
+      const userProjects = await db.getUserProjects(userId)
+      setProjects(userProjects)
+    } catch (error) {
+      console.error("Failed to load user projects:", error)
+    } finally {
+      setIsLoading(false)
     }
+  }
 
+  useEffect(() => {
     loadProjects()
   }, [isReady, db, userId])
 
-  return { projects, isLoading, refetch: () => setIsLoading(true) }
+  return { projects, isLoading, refetch: loadProjects }
 }
 
 export function useProjectStats(projectId: number) {

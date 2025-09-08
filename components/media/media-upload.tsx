@@ -8,6 +8,7 @@ import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Camera, Mic, Upload, X, Play, Pause, Download } from "lucide-react"
 import { MediaFile } from "@/lib/media-types"
+import { supabase } from "@/lib/supabase"
 
 export type MediaUploadHandle = {
   startAudioRecording: () => Promise<void>
@@ -52,11 +53,23 @@ export const MediaUpload = forwardRef<MediaUploadHandle, MediaUploadProps>(funct
   const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
 
-  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files || [])
 
-    files.forEach((file) => {
+    for (const file of files) {
       if (mediaFiles.length >= maxFiles) return
+
+      // Upload vers Supabase Storage
+      const fileExt = file.name.split('.').pop()
+      const filePath = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}.${fileExt}`
+      const { error } = await supabase.storage.from('media').upload(filePath, file, { upsert: false })
+      if (error) {
+        alert("Erreur lors de l'upload du fichier : " + error.message)
+        continue
+      }
+      // Récupérer l'URL publique
+      const { data } = supabase.storage.from('media').getPublicUrl(filePath)
+      const publicUrl = data.publicUrl
 
       const mediaFile: MediaFile = {
         id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
@@ -67,12 +80,12 @@ export const MediaUpload = forwardRef<MediaUploadHandle, MediaUploadProps>(funct
           : "file",
         name: file.name,
         size: file.size,
-        url: URL.createObjectURL(file),
-        blob: file,
+        url: publicUrl,
+        blob: undefined, // plus besoin du blob après upload
       }
 
       onMediaAdd(mediaFile)
-    })
+    }
 
     // Reset input
     if (fileInputRef.current) {
@@ -90,15 +103,27 @@ export const MediaUpload = forwardRef<MediaUploadHandle, MediaUploadProps>(funct
         chunks.push(event.data)
       }
 
-      mediaRecorder.onstop = () => {
+      mediaRecorder.onstop = async () => {
         const blob = new Blob(chunks, { type: "audio/webm" })
+        const fileName = `Enregistrement_${new Date().toLocaleTimeString("fr-FR")}.webm`
+        // Upload audio vers Supabase Storage
+        const filePath = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}.webm`
+        const { error } = await supabase.storage.from('media').upload(filePath, blob, { upsert: false })
+        if (error) {
+          alert("Erreur lors de l'upload de l'audio : " + error.message)
+          stream.getTracks().forEach((track) => track.stop())
+          return
+        }
+        const { data } = supabase.storage.from('media').getPublicUrl(filePath)
+        const publicUrl = data.publicUrl
+
         const mediaFile: MediaFile = {
           id: Date.now().toString(),
           type: "audio",
-          name: `Enregistrement_${new Date().toLocaleTimeString("fr-FR")}.webm`,
+          name: fileName,
           size: blob.size,
-          url: URL.createObjectURL(blob),
-          blob,
+          url: publicUrl,
+          blob: undefined,
         }
 
         onMediaAdd(mediaFile)

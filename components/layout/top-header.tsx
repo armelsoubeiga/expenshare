@@ -1,6 +1,7 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
+import { useRouter, usePathname } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -22,6 +23,27 @@ interface TopHeaderProps {
 
 export function TopHeader({ onLogout }: TopHeaderProps) {
   const [isMenuOpen, setIsMenuOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const router = useRouter()
+  const pathname = usePathname()
+  // Fermer le menu si clic en dehors
+  useEffect(() => {
+    if (!isMenuOpen) return;
+    function handleClickOutside(event: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setIsMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [isMenuOpen]);
+
+  // Fermer le menu lors d'un changement de page/onglet
+  useEffect(() => {
+    setIsMenuOpen(false);
+  }, [pathname]);
   const [userName, setUserName] = useState<string>("")
   const [showSettings, setShowSettings] = useState(false)
   const [showPinChange, setShowPinChange] = useState(false)
@@ -119,10 +141,8 @@ export function TopHeader({ onLogout }: TopHeaderProps) {
       if (!file) return
 
       try {
-        const text = await file.text()
-        await db.importDatabase(text)
-        alert("Données importées avec succès")
-        window.location.reload()
+        // Fonctionnalité d'import non disponible avec Supabase
+        alert("L'import de données n'est pas disponible avec la version Supabase de l'application.")
       } catch (error) {
         console.error("Import failed:", error)
         alert("Erreur lors de l'import des données")
@@ -148,7 +168,7 @@ export function TopHeader({ onLogout }: TopHeaderProps) {
         </Button>
 
         {isMenuOpen && (
-          <div className="absolute right-0 mt-2 w-56 rounded-md shadow-lg bg-card border border-border z-50">
+          <div ref={menuRef} className="absolute right-0 mt-2 w-56 rounded-md shadow-lg bg-card border border-border z-50">
           <div className="flex flex-col space-y-1 p-3">
             <p className="text-sm font-medium leading-none">{userName}</p>
             <p className="text-xs leading-none text-muted-foreground">Connecté</p>

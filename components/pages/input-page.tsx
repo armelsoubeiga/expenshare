@@ -20,12 +20,21 @@ export function InputPage() {
   const [selectedProjectForSettings, setSelectedProjectForSettings] = useState<number | null>(null)
   const [userId, setUserId] = useState<number | null>(null)
 
-  // Get user ID
   useEffect(() => {
     const storedUser = localStorage.getItem("expenshare_user")
     if (storedUser) {
       const userData = JSON.parse(storedUser)
       setUserId(userData.id)
+    }
+    
+    // Écouter les mises à jour de projets
+    const onProjectUpdated = () => {
+      refetch()
+    }
+    window.addEventListener('expenshare:project-updated', onProjectUpdated)
+    
+    return () => {
+      window.removeEventListener('expenshare:project-updated', onProjectUpdated)
     }
   }, [])
 

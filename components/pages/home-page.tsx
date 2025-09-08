@@ -16,7 +16,7 @@ import { Button } from "@/components/ui/button"
 export function HomePage() {
   const { stats, isLoading: statsLoading, refetch: refetchStats } = useGlobalStats()
   const { transactions, isLoading: transactionsLoading, refetch: refetchTransactions } = useRecentTransactions(10)
-  const [showDetails, setShowDetails] = useState(false)
+  const [showDetails, setShowDetails] = useState(true)
   const [preview, setPreview] = useState<{ type: 'image'|'audio'|'text'; content: string; title: string } | null>(null)
   const [displayCurrency, setDisplayCurrency] = useState<"EUR"|"CFA"|"USD">("EUR")
   const [eurToCfa, setEurToCfa] = useState<number>(655.957)
@@ -52,7 +52,18 @@ export function HomePage() {
       }
     }
     window.addEventListener('expenshare:currency-changed', onCurrencyChanged)
-    return () => window.removeEventListener('expenshare:currency-changed', onCurrencyChanged)
+    
+    // Écouter les mises à jour de projets pour recharger les données
+    const onProjectUpdated = () => {
+      refetchStats()
+      refetchTransactions()
+    }
+    window.addEventListener('expenshare:project-updated', onProjectUpdated)
+    
+    return () => {
+      window.removeEventListener('expenshare:currency-changed', onCurrencyChanged)
+      window.removeEventListener('expenshare:project-updated', onProjectUpdated)
+    }
   }, [])
 
   const convertAmount = (amountEur: number) => {
@@ -72,7 +83,25 @@ export function HomePage() {
     return new Intl.NumberFormat("fr-FR", { style: "currency", currency }).format(value)
   }
 
-  
+  const formatAmountByProject = (amountEur: number, projectCurrency: string) => {
+    // Si pas de devise de projet spécifiée, utiliser la devise utilisateur globale
+    if (!projectCurrency || projectCurrency === "EUR") {
+      return formatAmount(amountEur)
+    }
+    
+    // Utiliser la devise du projet
+    const currency = projectCurrency === "XOF" ? "XOF" : projectCurrency
+    let value = amountEur
+    
+    // Convertir selon la devise du projet
+    if (projectCurrency === "XOF") {
+      value = amountEur * eurToCfa
+    } else if (projectCurrency === "USD") {
+      value = amountEur * eurToUsd
+    }
+    
+    return new Intl.NumberFormat("fr-FR", { style: "currency", currency }).format(value)
+  }
 
   const getBalanceColor = (balance: number) => {
     if (balance > 0) return "text-green-600"
@@ -170,7 +199,7 @@ export function HomePage() {
             <CardFooter className="pt-0 pb-2">
               <div className="flex items-center gap-1 text-xs text-muted-foreground">
                 <Folder className="h-3 w-3" />
-                <span>Moyenne par projet: {formatCurrency(stats.totalBudgets / stats.projectCount)}</span>
+                <span>Moyenne par projet: {formatAmount(stats.totalBudgets / stats.projectCount)}</span>
               </div>
             </CardFooter>
           )}
@@ -406,7 +435,7 @@ export function HomePage() {
                       </TableCell>
                       <TableCell className="font-medium">
                         <span className={transaction.type === "expense" ? "text-red-600" : "text-blue-600"}>
-                          {formatCurrency(Number(transaction.amount))}
+                          {formatAmountByProject(Number(transaction.amount), transaction.project_currency)}
                         </span>
                       </TableCell>
                       <TableCell className="max-w-[120px] truncate">
