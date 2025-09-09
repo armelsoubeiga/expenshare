@@ -637,6 +637,48 @@ class SupabaseDatabase {
     return data as Note[];
   }
 
+  /**
+   * Supprime une catégorie d'un projet si l'utilisateur courant est le propriétaire du projet.
+   * Même esprit de permission que deleteTransaction (seul l'auteur/owner peut supprimer).
+   */
+  async deleteCategory(categoryId: number, projectId: number): Promise<boolean> {
+    try {
+      const uid = this.getCurrentUserId()
+      if (!uid) return false
+      // Vérifier que l'utilisateur est le propriétaire du projet
+      const { data: proj, error: projErr } = await supabase
+        .from('projects')
+        .select('id, created_by')
+        .eq('id', Number(projectId))
+        .maybeSingle()
+      if (projErr || !proj) return false
+      if (String(proj.created_by) !== String(uid)) {
+        // Aligné sur deleteTransaction: pas de privilège admin pour supprimer les éléments des autres
+        return false
+      }
+
+      const { error } = await supabase
+        .from('categories')
+        .delete()
+        .eq('id', Number(categoryId))
+        .eq('project_id', Number(projectId))
+
+      if (error) {
+        console.error('[ExpenseShare] Error deleting category:', error)
+        return false
+      }
+      try {
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('expenshare:project-updated'))
+        }
+      } catch {}
+      return true
+    } catch (e) {
+      console.error('[ExpenseShare] deleteCategory failed:', e)
+      return false
+    }
+  }
+
   async getGlobalStats() {
     try {
       const uid = this.getCurrentUserId()

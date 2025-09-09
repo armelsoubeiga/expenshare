@@ -30,6 +30,9 @@ export function InputPage() {
   const [editTransactions, setEditTransactions] = useState<any[]>([])
   const [isLoadingEdits, setIsLoadingEdits] = useState(false)
   const [userId, setUserId] = useState<number | null>(null)
+  const [editTab, setEditTab] = useState<'transactions' | 'categories'>('transactions')
+  const [editCategories, setEditCategories] = useState<any[]>([])
+  const [editingProjectName, setEditingProjectName] = useState<string>("")
 
   useEffect(() => {
     const storedUser = localStorage.getItem("expenshare_user")
@@ -70,9 +73,14 @@ export function InputPage() {
 
   const openEditTransactions = async (projectId: number) => {
     setEditingProjectId(projectId)
+  // Déterminer le nom du projet pour un titre plus parlant
+  const p = projects.find((pp: any) => Number(pp.id) === Number(projectId))
+  setEditingProjectName(p?.name || `Projet #${projectId}`)
     setEditPage(1)
+  setEditTab('transactions')
   await loadEditCurrency(projectId)
     await loadEditPage(projectId, 1)
+  await loadEditCategories(projectId)
   }
 
   const loadEditPage = async (projectId: number, page: number) => {
@@ -98,6 +106,25 @@ export function InputPage() {
     if (ok) {
       await loadEditPage(editingProjectId, editPage)
       // rafraîchir la liste des projets/statistiques si nécessaire
+      try {
+        window.dispatchEvent(new CustomEvent('expenshare:project-updated'))
+      } catch {}
+    }
+  }
+
+  const loadEditCategories = async (projectId: number) => {
+    if (!db) return
+    try {
+      const cats = await db.getProjectCategories(projectId)
+      setEditCategories(cats || [])
+    } catch {}
+  }
+
+  const deleteCategory = async (catId: number) => {
+    if (!db || !editingProjectId) return
+    const ok = await db.deleteCategory(catId, editingProjectId)
+    if (ok) {
+      await loadEditCategories(editingProjectId)
       try {
         window.dispatchEvent(new CustomEvent('expenshare:project-updated'))
       } catch {}
@@ -286,10 +313,24 @@ export function InputPage() {
       {editingProjectId && (
         <div className="fixed inset-0 bg-black/40 z-40 flex items-end sm:items-center justify-center">
           <div className="bg-background w-full sm:max-w-2xl sm:rounded-lg shadow-lg p-4 max-h-[80vh] overflow-auto">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-lg font-semibold">Mes transactions — Projet #{editingProjectId}</h3>
-              <Button variant="ghost" size="sm" onClick={() => setEditingProjectId(null)}>
-                Fermer
+            <div className="flex items-start justify-between mb-3">
+              <div>
+                <h3 className="text-lg font-semibold">Modifier — {editingProjectName}</h3>
+                <div className="mt-2 w-full">
+                  <div className="grid w-full grid-cols-2 rounded-md border border-border overflow-hidden">
+                    <button
+                      className={`px-3 py-2 text-sm text-center transition-colors ${editTab === 'transactions' ? 'bg-primary text-primary-foreground' : 'bg-card text-foreground hover:bg-accent'}`}
+                      onClick={() => setEditTab('transactions')}
+                    >Transactions</button>
+                    <button
+                      className={`px-3 py-2 text-sm text-center transition-colors ${editTab === 'categories' ? 'bg-primary text-primary-foreground' : 'bg-card text-foreground hover:bg-accent'}`}
+                      onClick={() => setEditTab('categories')}
+                    >Catégories</button>
+                  </div>
+                </div>
+              </div>
+              <Button variant="ghost" size="icon" onClick={() => setEditingProjectId(null)} aria-label="Fermer">
+                <X className="h-4 w-4" />
               </Button>
             </div>
             {isLoadingEdits ? (
@@ -298,38 +339,71 @@ export function InputPage() {
               </div>
             ) : (
               <div className="space-y-2">
-                {editTransactions.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">Aucune transaction</p>
-                ) : (
-                  <ul className="divide-y">
-                    {editTransactions.map((t) => (
-            <li key={t.id} className="py-2 flex items-center gap-3">
-                        <div className={`px-2 py-0.5 rounded text-xs ${t.type === 'expense' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}>{t.type}</div>
-                        <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium truncate">
-                {t.parent_category_name && t.category_name
-                  ? `${t.parent_category_name}/${t.category_name}`
-                  : (t.category_name || t.title || '(sans titre)')}
-                {` — ${formatEditAmount(Number(t.amount))}`}
-              </div>
-                          {t.description && <div className="text-xs text-muted-foreground truncate">{t.description}</div>}
+                {editTab === 'transactions' ? (
+                  <>
+                    {editTransactions.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">Aucune transaction</p>
+                    ) : (
+                      <ul className="divide-y">
+                        {editTransactions.map((t) => (
+                          <li key={t.id} className="py-2 flex items-center gap-3">
+                            <div className={`px-2 py-0.5 rounded text-xs ${t.type === 'expense' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}>{t.type}</div>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-sm font-medium truncate">
+                                {t.parent_category_name && t.category_name
+                                  ? `${t.parent_category_name}/${t.category_name}`
+                                  : (t.category_name || t.title || '(sans titre)')}
+                                {` — ${formatEditAmount(Number(t.amount))}`}
+                              </div>
+                              {t.description && <div className="text-xs text-muted-foreground truncate">{t.description}</div>}
+                            </div>
+                            <button aria-label="Supprimer" className="text-muted-foreground hover:text-destructive" onClick={() => deleteLine(t.id)}>
+                              <X className="h-4 w-4" />
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {/* Pagination */}
+                    {editTotal > editPageSize && (
+                      <div className="flex items-center justify-between pt-2">
+                        <span className="text-xs text-muted-foreground">Page {editPage} / {Math.max(1, Math.ceil(editTotal / editPageSize))}</span>
+                        <div className="flex gap-2">
+                          <Button variant="outline" size="sm" disabled={editPage <= 1} onClick={() => { const p = editPage - 1; setEditPage(p); loadEditPage(editingProjectId!, p); }}>Précédent</Button>
+                          <Button variant="outline" size="sm" disabled={editPage >= Math.ceil(editTotal / editPageSize)} onClick={() => { const p = editPage + 1; setEditPage(p); loadEditPage(editingProjectId!, p); }}>Suivant</Button>
                         </div>
-                        <button aria-label="Supprimer" className="text-muted-foreground hover:text-destructive" onClick={() => deleteLine(t.id)}>
-                          <X className="h-4 w-4" />
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                {/* Pagination */}
-                {editTotal > editPageSize && (
-                  <div className="flex items-center justify-between pt-2">
-                    <span className="text-xs text-muted-foreground">Page {editPage} / {Math.max(1, Math.ceil(editTotal / editPageSize))}</span>
-                    <div className="flex gap-2">
-                      <Button variant="outline" size="sm" disabled={editPage <= 1} onClick={() => { const p = editPage - 1; setEditPage(p); loadEditPage(editingProjectId!, p); }}>Précédent</Button>
-                      <Button variant="outline" size="sm" disabled={editPage >= Math.ceil(editTotal / editPageSize)} onClick={() => { const p = editPage + 1; setEditPage(p); loadEditPage(editingProjectId!, p); }}>Suivant</Button>
-                    </div>
-                  </div>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    {editCategories.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">Aucune catégorie</p>
+                    ) : (
+                      <ul className="divide-y">
+                        {(() => {
+                          // Construire l'ensemble des parents pour déduire les feuilles
+                          const parents = new Set<number>()
+                          for (const cat of editCategories) {
+                            if (cat.parent_id != null) parents.add(Number(cat.parent_id))
+                          }
+                          const leaves = editCategories.filter(cat => !parents.has(Number(cat.id)))
+                          return leaves.map((c) => (
+                            <li key={c.id} className="py-2 flex items-center gap-3">
+                              <div className="flex-1 min-w-0">
+                                <div className="text-sm font-medium truncate">
+                                  {c.parent_id ? `${(editCategories.find((x) => x.id === c.parent_id)?.name) || 'Parent'}/${c.name}` : c.name}
+                                </div>
+                              </div>
+                              <button aria-label="Supprimer" className="text-muted-foreground hover:text-destructive" onClick={() => deleteCategory(c.id)}>
+                                <X className="h-4 w-4" />
+                              </button>
+                            </li>
+                          ))
+                        })()}
+                      </ul>
+                    )}
+                  </>
                 )}
               </div>
             )}

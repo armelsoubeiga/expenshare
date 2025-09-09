@@ -26,6 +26,7 @@ export function TransactionForm({ isOpen, onClose, onSuccess }: TransactionFormP
   const { db } = useDatabase()
   const [projects, setProjects] = useState<any[]>([])
   const [categories, setCategories] = useState<any[]>([])
+  const [leafCategoryIds, setLeafCategoryIds] = useState<Set<number>>(new Set())
   const [formData, setFormData] = useState({
     projectId: "",
     categoryId: "",
@@ -102,6 +103,16 @@ export function TransactionForm({ isOpen, onClose, onSuccess }: TransactionFormP
       })
 
       setCategories(sortedCategories)
+      // Construire l'ensemble des catégories parents (qui ont des enfants) pour déduire les feuilles
+      const parents = new Set<number>()
+      for (const c of sortedCategories) {
+        if (c.parent_id != null) parents.add(Number(c.parent_id))
+      }
+      const leaves = new Set<number>()
+      for (const c of sortedCategories) {
+        if (!parents.has(Number(c.id))) leaves.add(Number(c.id))
+      }
+      setLeafCategoryIds(leaves)
     } catch (error) {
       console.error("Failed to load categories:", error)
     }
@@ -203,12 +214,9 @@ export function TransactionForm({ isOpen, onClose, onSuccess }: TransactionFormP
   }
 
   const getCategoryDisplayName = (category: any) => {
-    if (category.level === 1) {
-      return category.name
-    } else {
-      const parentCategory = categories.find((c) => c.id === category.parent_id)
-      return `${parentCategory?.name || ""} → ${category.name}`
-    }
+    if (category.level === 1) return category.name
+    const parentCategory = categories.find((c) => c.id === category.parent_id)
+    return `${parentCategory?.name || ''}/${category.name}`
   }
 
   return (
@@ -291,14 +299,15 @@ export function TransactionForm({ isOpen, onClose, onSuccess }: TransactionFormP
                         <SelectValue placeholder="Sélectionnez une catégorie" />
                       </SelectTrigger>
                       <SelectContent>
-                        {categories.map((category) => (
-                          <SelectItem key={category.id} value={category.id.toString()}>
-                            <div className="flex items-center gap-2">
-                              <span className="text-muted-foreground">{category.level === 2 ? "  └ " : ""}</span>
-                              <span>{getCategoryDisplayName(category)}</span>
-                            </div>
-                          </SelectItem>
-                        ))}
+                        {categories
+                          .filter((category) => leafCategoryIds.has(Number(category.id)))
+                          .map((category) => (
+                            <SelectItem key={category.id} value={category.id.toString()}>
+                              <div className="flex items-center gap-2">
+                                <span>{getCategoryDisplayName(category)}</span>
+                              </div>
+                            </SelectItem>
+                          ))}
                       </SelectContent>
                     </Select>
                   </div>
