@@ -5,6 +5,59 @@ import { User, Project, ProjectUser, Category, Transaction, Note, Setting } from
 
 // Classe de gestion de la base de données avec Supabase
 class SupabaseDatabase {
+  // --- Helpers d'autorisation (sans RLS) ---
+  private getCurrentUserId(): string | null {
+    try {
+      const stored =
+        (typeof window !== 'undefined' && (localStorage.getItem('expenshare_current_user') || localStorage.getItem('expenshare_user'))) ||
+        null
+      if (!stored) return null
+      const obj = JSON.parse(stored)
+      return obj?.id ? String(obj.id) : null
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Retourne la liste des project_ids accessibles pour un utilisateur donné
+   */
+  private async getAuthorizedProjectIds(userId: string): Promise<number[]> {
+    try {
+      // Projets créés par l'utilisateur
+      const { data: created } = await supabase
+        .from('projects')
+        .select('id')
+        .eq('created_by', userId)
+
+      // Projets où l'utilisateur est membre
+      const { data: memberships } = await supabase
+        .from('project_users')
+        .select('project_id')
+        .eq('user_id', userId)
+
+      const ids = new Set<number>()
+      ;(created || []).forEach((p: any) => ids.add(Number(p.id)))
+      ;(memberships || []).forEach((m: any) => ids.add(Number(m.project_id)))
+      return Array.from(ids)
+    } catch {
+      return []
+    }
+  }
+
+  /**
+   * Supprime un utilisateur par son ID (admin uniquement)
+   * @param userId ID de l'utilisateur à supprimer
+   * @throws Error si la suppression échoue
+   */
+  async deleteUser(userId: string) {
+    const { error } = await supabase.from('users').delete().eq('id', userId);
+    if (error) {
+      console.error('[ExpenseShare] Error deleting user:', error);
+      throw new Error(error.message);
+    }
+    return true;
+  }
   projects = {
     add: async (data: Project) => {
       try {
@@ -83,13 +136,29 @@ class SupabaseDatabase {
     }),
     toArray: async () => {
       try {
+        const uid = this.getCurrentUserId()
+        if (!uid) return []
+
+        // Vérifier si admin
+        let isAdmin = false
+        try {
+          const { data } = await supabase.from('users').select('id').eq('id', uid).eq('is_admin', true).maybeSingle()
+          isAdmin = !!data
+        } catch {}
+
+        if (isAdmin) {
+          const { data, error } = await supabase.from('projects').select('*')
+          if (error) return []
+          return (data || []) as Project[]
+        }
+
+        const authorized = await this.getAuthorizedProjectIds(uid)
+        if (!authorized.length) return []
         const { data, error } = await supabase
           .from('projects')
           .select('*')
-        if (error) {
-          console.error('[ExpenseShare] Error fetching all projects:', error)
-          return []
-        }
+          .in('id', authorized)
+        if (error) return []
         return (data || []) as Project[]
       } catch (error) {
         console.error('[ExpenseShare] projects.toArray failed:', error)
@@ -109,50 +178,34 @@ class SupabaseDatabase {
 
   async getUserProjects(userId: string | number) {
     try {
-      // Utiliser une requête avec jointure mais sans forcer inner join (pouvant causer des erreurs RLS)
-      const { data, error } = await supabase
+      // Toujours filtrer: projets créés par l'utilisateur + projets où il est membre
+      const uid = String(userId)
+      const authorized = await this.getAuthorizedProjectIds(uid)
+      if (!authorized.length) return []
+
+      const { data: projects, error } = await supabase
         .from('projects')
-        .select(`
-          *,
-          project_users!project_id(role, user_id)
-        `)
-        .eq('project_users.user_id', String(userId));
-      
+        .select('*')
+        .in('id', authorized)
+
       if (error) {
-        console.error('[ExpenseShare] Error loading user projects:', error);
-        // Fallback en deux requêtes séparées
-        try {
-          // 1. Récupérer d'abord les associations projet-utilisateur
-          const { data: userProjects } = await supabase
-            .from('project_users')
-            .select('project_id, role')
-            .eq('user_id', String(userId));
-          
-          if (!userProjects || userProjects.length === 0) return [];
-          
-          // 2. Récupérer les détails des projets
-          const projectIds = userProjects.map(up => up.project_id);
-          const { data: projects } = await supabase
-            .from('projects')
-            .select('*')
-            .in('id', projectIds);
-          
-          // 3. Combiner les résultats
-          return (projects || []).map(project => {
-            const userProject = userProjects.find(up => up.project_id === project.id);
-            return { ...project, role: userProject?.role || 'viewer' };
-          });
-        } catch (fallbackError) {
-          console.error('[ExpenseShare] Projects fallback failed:', fallbackError);
-          return [];
-        }
+        console.error('[ExpenseShare] Error loading user projects:', error)
+        return []
       }
-      
-      // Mapper correctement les résultats
-      return (data || []).map((p: any) => ({
-        ...p, 
-        role: p.project_users?.find((pu: any) => String(pu.user_id) === String(userId))?.role || 'viewer'
-      }));
+
+      // Récupérer les rôles depuis project_users
+      const { data: rels } = await supabase
+        .from('project_users')
+        .select('project_id, role')
+        .eq('user_id', uid)
+
+      return (projects || []).map((p: any) => ({
+        ...p,
+        role:
+          String(p.created_by) === uid
+            ? 'owner'
+            : (rels || []).find((r: any) => Number(r.project_id) === Number(p.id))?.role || 'viewer',
+      }))
     } catch (error) {
       console.error('[ExpenseShare] getUserProjects failed:', error);
       return [];
@@ -161,6 +214,10 @@ class SupabaseDatabase {
 
   async getProjectById(projectId: number) {
     try {
+  const uid = this.getCurrentUserId()
+  if (!uid) return null
+  const authorized = await this.getAuthorizedProjectIds(uid)
+  if (!authorized.includes(Number(projectId))) return null
       const { data, error } = await supabase
         .from('projects')
         .select('*')
@@ -202,13 +259,21 @@ class SupabaseDatabase {
   }
 
   async getProjectCategories(projectId: number) {
-    const { data, error } = await supabase.from('categories').select('*').eq('project_id', projectId);
+  const uid = this.getCurrentUserId()
+  if (!uid) return []
+  const authorized = await this.getAuthorizedProjectIds(uid)
+  if (!authorized.includes(Number(projectId))) return []
+  const { data, error } = await supabase.from('categories').select('*').eq('project_id', projectId);
     if (error) return [];
     return data as Category[];
   }
 
   async getProjectCategoryHierarchy(projectId: number): Promise<any[]> {
     try {
+  const uid = this.getCurrentUserId()
+  if (!uid) return []
+  const authorized = await this.getAuthorizedProjectIds(uid)
+  if (!authorized.includes(Number(projectId))) return []
       // Charger catégories du projet
       const { data: categories, error: catErr } = await supabase
         .from('categories')
@@ -282,6 +347,12 @@ class SupabaseDatabase {
 
   async getProjectTransactions(projectId: number) {
     try {
+  // Autorisation: l'utilisateur doit avoir accès à ce projet
+  const uid = this.getCurrentUserId()
+  if (!uid) return []
+  const authorized = await this.getAuthorizedProjectIds(uid)
+  if (!authorized.includes(Number(projectId))) return []
+
       // 1) Récupérer les transactions (sans jointures pour réduire l'impact RLS)
       const { data: tx, error: txErr } = await supabase
         .from('transactions')
@@ -358,10 +429,17 @@ class SupabaseDatabase {
 
   async getRecentTransactions(limit = 10) {
     try {
-      // 1) Transactions seules
+      // Filtrer par projets autorisés
+      const uid = this.getCurrentUserId()
+      if (!uid) return []
+      const authorized = await this.getAuthorizedProjectIds(uid)
+      if (!authorized.length) return []
+
+      // 1) Transactions autorisées
       const { data: tx, error: txErr } = await supabase
         .from('transactions')
         .select('*')
+        .in('project_id', authorized)
         .order('created_at', { ascending: false })
         .limit(limit)
       if (txErr) return []
@@ -440,8 +518,23 @@ class SupabaseDatabase {
 
   async getGlobalStats() {
     try {
-      const { data: transactionsData } = await supabase.from('transactions').select('id, type, amount, created_at');
-      const { count: projectCount } = await supabase.from('projects').select('*', { count: 'exact', head: true });
+      const uid = this.getCurrentUserId()
+      if (!uid) {
+        return { totalExpenses: 0, totalBudgets: 0, balance: 0, transactionCount: 0, lastTransactionDate: null, projectCount: 0, expensesByMonth: [], budgetsByMonth: [] }
+      }
+      const authorized = await this.getAuthorizedProjectIds(uid)
+      if (!authorized.length) {
+        return { totalExpenses: 0, totalBudgets: 0, balance: 0, transactionCount: 0, lastTransactionDate: null, projectCount: 0, expensesByMonth: [], budgetsByMonth: [] }
+      }
+
+      const { data: transactionsData } = await supabase
+        .from('transactions')
+        .select('id, type, amount, created_at, project_id')
+        .in('project_id', authorized)
+      const { count: projectCount } = await supabase
+        .from('projects')
+        .select('*', { count: 'exact', head: true })
+        .in('id', authorized as number[])
 
       const expenses = (transactionsData || []).filter((t) => t.type === 'expense');
       const budgets = (transactionsData || []).filter((t) => t.type === 'budget');
@@ -674,6 +767,26 @@ class SupabaseDatabase {
         return 1
       } catch (error: any) {
         console.error('[ExpenseShare] project_users.add failed:', error)
+        throw error
+      }
+    },
+    // Supprimer un utilisateur d'un projet (par project_id + user_id)
+    remove: async (project_id: number, user_id: string | number) => {
+      try {
+        const { error } = await supabase
+          .from('project_users')
+          .delete()
+          .eq('project_id', Number(project_id))
+          .eq('user_id', String(user_id))
+
+        if (error) {
+          console.error('[ExpenseShare] Error removing project user:', error)
+          throw new Error(error.message)
+        }
+
+        return 1
+      } catch (error: any) {
+        console.error('[ExpenseShare] project_users.remove failed:', error)
         throw error
       }
     },

@@ -17,7 +17,7 @@ export const viewport: Viewport = {
 }
 
 export const metadata: Metadata = {
-  title: "ExpenseShare - Gestion de Projets et Dépenses",
+  title: "ExpenseShare",
   description: "Application de gestion collaborative de projets et suivi des dépenses/budgets",
   generator: "ExpenseShare v1.0",
   manifest: "/manifest.json",
@@ -32,7 +32,7 @@ export const metadata: Metadata = {
   openGraph: {
     type: "website",
     siteName: "ExpenseShare",
-    title: "ExpenseShare - Gestion de Projets et Dépenses",
+    title: "ExpenseShare",
     description: "Application de gestion collaborative de projets et suivi des dépenses/budgets",
   },
   robots: {

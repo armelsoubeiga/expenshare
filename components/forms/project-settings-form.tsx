@@ -68,9 +68,9 @@ export function ProjectSettingsForm({ isOpen, onClose, onSuccess, projectId, act
   const [newSubcategory, setNewSubcategory] = useState("")
   const [selectedCategoryForSub, setSelectedCategoryForSub] = useState<number | null>(null)
   
-  const [newUserId, setNewUserId] = useState<number | null>(null)
+  const [newUserId, setNewUserId] = useState<string | null>(null)
   const [isAddingUser, setIsAddingUser] = useState(false)
-  const [isRemovingUser, setIsRemovingUser] = useState<number | null>(null)
+  const [isRemovingUser, setIsRemovingUser] = useState<string | null>(null)
   
   const [error, setError] = useState("")
   const [isLoading, setIsLoading] = useState(false)
@@ -262,8 +262,8 @@ export function ProjectSettingsForm({ isOpen, onClose, onSuccess, projectId, act
     
     setIsAddingUser(true)
     try {
-      // Vérifier que l'utilisateur n'est pas déjà dans le projet
-      if (projectUsers.some(user => user.id === newUserId)) {
+  // Vérifier que l'utilisateur n'est pas déjà dans le projet
+  if (projectUsers.some(user => String(user.id) === String(newUserId))) {
         setError("Cet utilisateur est déjà dans le projet")
         return
       }
@@ -271,19 +271,13 @@ export function ProjectSettingsForm({ isOpen, onClose, onSuccess, projectId, act
       // Ajouter l'utilisateur au projet avec un rôle par défaut
       await db.project_users.add({
         project_id: projectId,
-        user_id: newUserId,
+        user_id: newUserId as any,
         role: "member",
         added_at: new Date()
       })
-      
-      // Récupérer les détails de l'utilisateur
-      const user = await db.users.get(newUserId)
-      
-      if (user) {
-        setProjectUsers([...projectUsers, { ...user, role: "member" }])
-      }
-      
-      // Réinitialiser l'état
+
+  // Recharger la liste depuis la DB pour garantir cohérence (RLS etc.)
+      await loadProjectData()
       setNewUserId(null)
       
     } catch (error) {
@@ -294,24 +288,22 @@ export function ProjectSettingsForm({ isOpen, onClose, onSuccess, projectId, act
     }
   }
   
-  const removeUserFromProject = async (userId: number) => {
+  const removeUserFromProject = async (userId: string | number) => {
     if (!db) return
     
-    setIsRemovingUser(userId)
+    setIsRemovingUser(String(userId))
     try {
       // Supprimer l'utilisateur du projet
-      await db.project_users
-        .where({ project_id: projectId, user_id: userId })
-        .delete()
-      
-      // Mettre à jour la liste des utilisateurs
-      setProjectUsers(projectUsers.filter(user => user.id !== userId))
+      await db.project_users.remove(projectId, userId)
+
+  // Recharger la liste depuis la DB
+  await loadProjectData()
       
     } catch (error) {
       console.error("Failed to remove user from project:", error)
       setError("Erreur lors de la suppression de l'utilisateur du projet")
     } finally {
-      setIsRemovingUser(null)
+  setIsRemovingUser(null)
     }
   }
 
@@ -546,8 +538,8 @@ export function ProjectSettingsForm({ isOpen, onClose, onSuccess, projectId, act
                     <Select
                       onValueChange={(value) => {
                         const selectedUser = allUsers.find((user) => user.id.toString() === value);
-                        if (selectedUser && !projectUsers.some((pu) => pu.id === selectedUser.id)) {
-                          setNewUserId(Number(value));
+                        if (selectedUser && !projectUsers.some((pu) => String(pu.id) === value)) {
+                          setNewUserId(value);
                         }
                       }}
                     >

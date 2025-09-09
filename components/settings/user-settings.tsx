@@ -18,7 +18,8 @@ export function UserSettings({ isOpen, onClose }: UserSettingsProps) {
   const { db, isReady } = useDatabase()
   const [projects, setProjects] = useState<any[]>([])
   const [isLoading, setIsLoading] = useState(true)
-  const [userId, setUserId] = useState<number | null>(null)
+  const [userId, setUserId] = useState<string | null>(null)
+  const [isAdmin, setIsAdmin] = useState(false)
   const [error, setError] = useState("")
   const [isDeleting, setIsDeleting] = useState<number | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null)
@@ -52,13 +53,35 @@ export function UserSettings({ isOpen, onClose }: UserSettingsProps) {
       const userData = JSON.parse(storedUser)
       setUserId(userData.id)
 
-      // Charger les projets dont l'utilisateur est propriétaire
-      const userProjects = await db.projects
-        .where("created_by")
-        .equals(userData.id)
-        .toArray()
+      // Détection admin
+      let adminId = null
+      if (db.getAdminUserId) {
+        adminId = await db.getAdminUserId()
+      }
+      const isUserAdmin = adminId && userData.id === adminId
+      setIsAdmin(!!isUserAdmin)
 
-      setProjects(userProjects)
+      let allProjects = []
+      if (isUserAdmin && db.projects && db.projects.toArray) {
+        // L'admin voit tous les projets
+        allProjects = await db.projects.toArray()
+        // Charger les noms des propriétaires
+        if (db.users && db.users.toArray) {
+          const users = await db.users.toArray()
+          const userMap = new Map((users as any[]).map((u: any) => [String(u.id), u]))
+          allProjects = (allProjects as any[]).map((p: any) => ({
+            ...p,
+            owner: userMap.get(String(p.created_by))
+          }))
+        }
+      } else {
+        // Utilisateur normal : ses propres projets
+        allProjects = await db.projects
+          .where("created_by")
+          .equals(userData.id)
+          .toArray()
+      }
+      setProjects(allProjects)
 
       // Charger paramètres devise utilisateur
       try {
@@ -217,9 +240,11 @@ export function UserSettings({ isOpen, onClose }: UserSettingsProps) {
           </div>
 
           <div>
-            <h3 className="text-lg font-medium">Mes projets</h3>
+            <h3 className="text-lg font-medium">{isAdmin ? "Tous les projets" : "Mes projets"}</h3>
             <p className="text-sm text-muted-foreground mb-2">
-              Liste des projets que vous avez créés. Vous pouvez supprimer les projets dont vous êtes propriétaire.
+              {isAdmin
+                ? "Liste de tous les projets de tous les utilisateurs. Vous pouvez supprimer n'importe quel projet."
+                : "Liste des projets que vous avez créés. Vous pouvez supprimer les projets dont vous êtes propriétaire."}
             </p>
 
             {isLoading ? (
@@ -230,7 +255,9 @@ export function UserSettings({ isOpen, onClose }: UserSettingsProps) {
               <>
                 {projects.length === 0 ? (
                   <div className="text-center p-4 border rounded-lg text-muted-foreground">
-                    Vous n'avez pas encore créé de projets.
+                    {isAdmin
+                      ? "Aucun projet n'a encore été créé."
+                      : "Vous n'avez pas encore créé de projets."}
                   </div>
                 ) : (
                   <div className="space-y-3">
@@ -246,7 +273,9 @@ export function UserSettings({ isOpen, onClose }: UserSettingsProps) {
                               variant="outline" 
                               style={{ backgroundColor: `${project.color}20`, borderColor: project.color }}
                             >
-                              Propriétaire
+                              {isAdmin && project.owner && project.owner.name
+                                ? `Propriétaire: ${project.owner.name}`
+                                : "Propriétaire"}
                             </Badge>
                           </div>
                           {project.description && (

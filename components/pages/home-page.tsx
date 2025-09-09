@@ -321,7 +321,7 @@ export function HomePage() {
                 {showDetails && stats.projectCount > 0 && (
                   <div className="flex justify-between items-center mt-1">
                     <span className="text-xs text-muted-foreground">Moyenne par projet</span>
-                    <span className="text-xs font-medium">{formatCurrency(stats.totalBudgets / stats.projectCount)}</span>
+                    <span className="text-xs font-medium">{formatAmount(stats.totalBudgets / stats.projectCount)}</span>
                   </div>
                 )}
               </div>
@@ -341,7 +341,7 @@ export function HomePage() {
                   )}
                 </div>
                 <span className={`text-sm font-bold ${getBalanceColor(stats.balance)}`}>
-                  {formatCurrency(stats.balance)}
+                  {formatAmount(stats.balance)}
                 </span>
               </div>
               
@@ -359,7 +359,7 @@ export function HomePage() {
                     <div className="flex justify-between">
                       <span>Marge restante:</span>
                       <span className={`font-medium ${getBalanceColor(stats.balance)}`}>
-                        {formatCurrency(stats.balance)}
+                        {formatAmount(stats.balance)}
                       </span>
                     </div>
                   </div>
