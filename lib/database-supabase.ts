@@ -577,6 +577,31 @@ class SupabaseDatabase {
     if (error) throw new Error(error.message);
     return data!.id as number;
   }
+
+  /**
+   * Supprime une transaction par ID si elle appartient à l'utilisateur courant.
+   * Retourne true si supprimée, false sinon.
+   */
+  async deleteTransaction(transactionId: number): Promise<boolean> {
+    const uid = this.getCurrentUserId()
+    if (!uid) return false
+    const { error } = await supabase
+      .from('transactions')
+      .delete()
+      .eq('id', Number(transactionId))
+      .eq('user_id', uid)
+    if (error) {
+      console.error('[ExpenseShare] Error deleting transaction:', error)
+      return false
+    }
+    try {
+      // Notifier l'app pour rafraîchir les vues (Home, etc.)
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('expenshare:project-updated'))
+      }
+    } catch {}
+    return true
+  }
   async getAdminUserId(): Promise<string | null> {
     try {
       const { data, error } = await supabase.from('users').select('id').eq('is_admin', true).maybeSingle()

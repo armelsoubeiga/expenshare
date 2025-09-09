@@ -262,11 +262,9 @@ export function StatsPage() {
                     <CardContent>
                       <CustomPieChart
                         data={stats.expensesByCategory.map(d => {
-                          // Si d.parent existe, on construit le label, sinon on prend d.name
-                          if (d.parent) {
-                            return { ...d, value: convertAmount(d.value), name: `${d.parent}/${d.name}` }
-                          }
-                          return { ...d, value: convertAmount(d.value), name: d.name }
+                          // Si d.parent existe (propriété optionnelle), construire le label parent/name
+                          const parent = (d as any).parent as string | undefined
+                          return { ...d, value: convertAmount(d.value), name: parent ? `${parent}/${d.name}` : d.name }
                         })}
                         title="Dépenses par Catégorie"
                         size={200}
@@ -359,7 +357,11 @@ export function StatsPage() {
                                   {transaction.type === "expense" ? "Dépense" : "Budget"}
                                 </Badge>
                               </TableCell>
-                              <TableCell className="font-medium">{transaction.title}</TableCell>
+                              <TableCell className="font-medium">
+                                {transaction.parent_category_name && transaction.category_name
+                                  ? `${transaction.parent_category_name}/${transaction.category_name}`
+                                  : (transaction.category_name || transaction.title || '—')}
+                              </TableCell>
                               <TableCell>{transaction.parent_category_name || transaction.category_name || "Sans catégorie"}</TableCell>
                               <TableCell>{transaction.parent_category_name ? transaction.category_name : ""}</TableCell>
                               <TableCell className="font-medium">

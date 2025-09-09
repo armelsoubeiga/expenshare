@@ -425,7 +425,9 @@ export function HomePage() {
                         </Badge>
                       </TableCell>
                       <TableCell className="font-medium">
-                        {transaction.title || "—"}
+                        {transaction.parent_category_name && transaction.category_name
+                          ? `${transaction.parent_category_name}/${transaction.category_name}`
+                          : (transaction.category_name || transaction.title || "—")}
                       </TableCell>
                       <TableCell className="font-medium">
                         {transaction.parent_category_name || transaction.category_name || "-"}

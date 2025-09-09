@@ -140,6 +140,7 @@ export function useProjectStats(projectId: number) {
   })
   const [isLoading, setIsLoading] = useState(true)
   const { isReady, db } = useDatabase()
+  const [reloadTick, setReloadTick] = useState(0)
 
   useEffect(() => {
     if (!isReady || !projectId) return
@@ -178,7 +179,14 @@ export function useProjectStats(projectId: number) {
     }
 
     loadProjectStats()
-  }, [isReady, db, projectId])
+  }, [isReady, db, projectId, reloadTick])
+
+  // Rafraîchir sur événement global (ex: suppression transaction)
+  useEffect(() => {
+    const onUpdated = () => setReloadTick((x) => x + 1)
+    window.addEventListener('expenshare:project-updated', onUpdated)
+    return () => window.removeEventListener('expenshare:project-updated', onUpdated)
+  }, [])
 
   return { stats, isLoading, refetch: () => setIsLoading(true) }
 }
