@@ -11,7 +11,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
-import { Settings, LogOut, KeyRound, Download, Users } from "lucide-react"
+import { Settings, LogOut, KeyRound, Download, Users, Bell } from "lucide-react"
 import { db } from "@/lib/database"
 import { UserSettings } from "@/components/settings/user-settings"
 import { PinChange } from "@/components/auth/pin-change"
@@ -22,6 +22,7 @@ interface TopHeaderProps {
 }
 
 export function TopHeader({ onLogout }: TopHeaderProps) {
+  type NotifItem = { id: string; type: 'expense'|'budget'; projectName?: string; userName: string; ts: number }
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const router = useRouter()
@@ -40,6 +41,8 @@ export function TopHeader({ onLogout }: TopHeaderProps) {
     };
   }, [isMenuOpen]);
 
+  
+
   // Fermer le menu lors d'un changement de page/onglet
   useEffect(() => {
     setIsMenuOpen(false);
@@ -49,6 +52,24 @@ export function TopHeader({ onLogout }: TopHeaderProps) {
   const [showPinChange, setShowPinChange] = useState(false)
   const [showUserMgmt, setShowUserMgmt] = useState(false)
   const [isAdmin, setIsAdmin] = useState(false)
+  const [unreadCount, setUnreadCount] = useState(0)
+  const [notifItems, setNotifItems] = useState<NotifItem[]>([])
+  const [showNotifMenu, setShowNotifMenu] = useState(false)
+  const notifRef = useRef<HTMLDivElement>(null)
+
+  // Fermer le menu de notifications si clic en dehors
+  useEffect(() => {
+    if (!showNotifMenu) return;
+    function handleClickOutside(event: MouseEvent) {
+      if (notifRef.current && !notifRef.current.contains(event.target as Node)) {
+        setShowNotifMenu(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [showNotifMenu]);
 
   useEffect(() => {
     // Récupérer le nom d'utilisateur depuis le stockage local
@@ -60,6 +81,114 @@ export function TopHeader({ onLogout }: TopHeaderProps) {
       db.getAdminUserId().then((aid) => {
         if (aid && userData.id === aid) setIsAdmin(true)
       }).catch(() => {})
+
+      // Clés par utilisateur
+      const unreadKey = `expenshare_notif_unread_${userData.id}`
+      const itemsKey = `expenshare_notif_items_${userData.id}`
+      const lastSeenKey = `expenshare_notif_lastSeen_${userData.id}`
+
+      // Charger la liste des notifications (locale d'abord)
+      try {
+        const saved = JSON.parse(localStorage.getItem(itemsKey) || '[]')
+        if (Array.isArray(saved)) setNotifItems(saved)
+      } catch {}
+
+  // lastSeen: ne pas initialiser automatiquement à "maintenant" pour que les utilisateurs voient
+  // les nouvelles transactions même s'ils n'étaient pas connectés.
+  // Si absent, on utilisera la date de création de l'utilisateur comme fallback (sinon 1970), sans l'écrire côté client.
+  let lastSeen = localStorage.getItem(lastSeenKey) || ''
+
+      // Calculer les non lus depuis lastSeen (serveur) pour garantir l’exactitude multi-appareils
+      // Déterminer un since effectif
+      const computeSince = async (): Promise<string> => {
+        if (lastSeen) return lastSeen
+        try {
+          const me = await db.users.get(String(userData.id))
+          const createdAt = me?.created_at ? new Date(me.created_at).toISOString() : null
+          return createdAt || '1970-01-01T00:00:00.000Z'
+        } catch {
+          return '1970-01-01T00:00:00.000Z'
+        }
+      }
+
+      const sincePromise = computeSince()
+
+      sincePromise.then((since) => db.getNewTransactionsCountSince(since)).then(async (serverCount) => {
+        // Fusionner avec un éventuel compteur local existant (priorité au max pour ne pas léser)
+        const raw = localStorage.getItem(unreadKey)
+        const localCount = raw ? Number(raw) || 0 : 0
+        const effective = Math.max(serverCount, localCount)
+        setUnreadCount(effective)
+        localStorage.setItem(unreadKey, String(effective))
+
+        // Si nous avons des non lus et que la liste locale est vide ou incomplète,
+        // récupérer les transactions depuis lastSeen pour construire des éléments
+        try {
+          if (effective > 0) {
+            const sinceVal = await sincePromise
+            const serverTx = await db.getTransactionsSince(sinceVal, Math.min(50, effective + 5))
+            if (Array.isArray(serverTx) && serverTx.length) {
+              const mapped: NotifItem[] = serverTx.map((t: any) => ({
+                id: `${t.id}_${t.created_at}`,
+                type: t.type === 'expense' ? 'expense' as const : 'budget' as const,
+                projectName: t.project_name || 'Projet',
+                userName: t.user_name || 'Utilisateur',
+                ts: new Date(t.created_at).getTime(),
+              }))
+              setNotifItems(prev => {
+                // Fusionner sans doublons par id
+                const seen = new Set(prev.map(p => p.id))
+                const merged = [...mapped.filter(m => !seen.has(m.id)), ...prev].slice(0, 30)
+                try { localStorage.setItem(itemsKey, JSON.stringify(merged)) } catch {}
+                return merged
+              })
+            }
+          }
+        } catch {}
+      }).catch(() => {
+        const raw = localStorage.getItem(unreadKey)
+        setUnreadCount(raw ? Number(raw) || 0 : 0)
+      })
+
+  // Écouter les nouvelles transactions pour incrémenter le compteur
+
+      // Écouter les nouvelles transactions pour incrémenter le compteur
+      const onNewTx = async (evt: any) => {
+        try {
+          const detail = evt?.detail || {}
+          // Vérifier si l'utilisateur courant appartient au projet concerné
+      const memberships = await db.project_users.where('user_id').equals(String(userData.id)).toArray()
+          const projectIds = new Set(memberships.map((m: any) => Number(m.project_id)))
+          if (projectIds.has(Number(detail.projectId))) {
+            // Mettre à jour compteur
+            setUnreadCount(prev => {
+              const next = (prev || 0) + 1
+        localStorage.setItem(unreadKey, String(next))
+              return next
+            })
+
+            // Ajouter l’item (type + projet + user)
+            try {
+              const u = await db.users.get(String(detail.userId))
+              const proj = await db.getProjectById(Number(detail.projectId))
+              const item = {
+                id: `${Date.now()}_${Math.random().toString(36).slice(2,7)}`,
+                type: (String(detail.type) === 'expense' ? 'expense' : 'budget') as 'expense'|'budget',
+                projectName: proj?.name || 'Projet',
+                userName: u?.name || 'Utilisateur',
+                ts: Date.now(),
+              }
+              setNotifItems(prev => {
+                const next = [item, ...prev].slice(0, 30)
+                try { localStorage.setItem(itemsKey, JSON.stringify(next)) } catch {}
+                return next
+              })
+            } catch {}
+          }
+        } catch {}
+      }
+      window.addEventListener('expenshare:new-transaction', onNewTx)
+      return () => window.removeEventListener('expenshare:new-transaction', onNewTx)
     }
   }, [])
 
@@ -158,8 +287,71 @@ export function TopHeader({ onLogout }: TopHeaderProps) {
         <p className="text-sm text-muted-foreground">Gestion de projets et dépenses</p>
       </div>
 
-      <div className="relative">
-        <Button variant="ghost" className="relative h-10 w-10 rounded-full" onClick={() => setIsMenuOpen(!isMenuOpen)}>
+      <div className="flex items-center gap-3">
+        {/* Notifications */}
+        <div className="relative" ref={notifRef}>
+          <Button 
+            variant="ghost" 
+            className="relative h-10 w-10 rounded-full" 
+            onClick={() => setShowNotifMenu(v => !v)} 
+            aria-label="Notifications"
+          >
+            <Bell className="h-6 w-6" />
+            {unreadCount > 0 && (
+              <span className="absolute -top-1 -right-1 bg-red-600 text-white font-bold text-[10px] leading-none rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1 shadow">
+                {unreadCount}
+              </span>
+            )}
+          </Button>
+          {showNotifMenu && (
+            <div className="absolute right-0 mt-2 w-72 rounded-md shadow-lg bg-card border border-border z-50 p-3">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm font-medium">Notifications</span>
+                <Button 
+                  variant="secondary" 
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  onClick={() => {
+                    const storedUser = localStorage.getItem('expenshare_user')
+                    if (storedUser) {
+                      const userData = JSON.parse(storedUser)
+                      const unreadKey = `expenshare_notif_unread_${userData.id}`
+                      const itemsKey = `expenshare_notif_items_${userData.id}`
+                      const lastSeenKey = `expenshare_notif_lastSeen_${userData.id}`
+                      localStorage.setItem(unreadKey, '0')
+                      localStorage.setItem(itemsKey, '[]')
+                      localStorage.setItem(lastSeenKey, new Date().toISOString())
+                    }
+                    setUnreadCount(0)
+                    setNotifItems([])
+                    setShowNotifMenu(false)
+                  }}
+                >Marquer comme lues</Button>
+              </div>
+              {notifItems.length === 0 ? (
+                <p className="text-sm text-muted-foreground">Aucune nouvelle transaction</p>
+              ) : (
+                <ul className="max-h-64 overflow-auto divide-y">
+                  {notifItems.map((n) => (
+                    <li key={n.id} className="py-2 flex items-center gap-2">
+                      <span className={`text-xs font-medium px-2 py-0.5 rounded ${n.type === 'expense' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}>
+                        {n.type === 'expense' ? 'Dépense' : 'Budget'}
+                      </span>
+                      {n.projectName && (
+                        <span className="text-sm text-muted-foreground truncate">{n.projectName}</span>
+                      )}
+                      <span className="text-sm truncate">{n.userName}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* User menu */}
+        <div className="relative">
+          <Button variant="ghost" className="relative h-10 w-10 rounded-full" onClick={() => setIsMenuOpen(!isMenuOpen)}>
           <Avatar className="h-10 w-10">
             <AvatarFallback className="bg-primary text-primary-foreground">
               {getUserInitials(userName)}
@@ -229,6 +421,7 @@ export function TopHeader({ onLogout }: TopHeaderProps) {
           </div>
         </div>
         )}
+        </div>
       </div>
 
       {/* Dialog des paramètres utilisateur */}

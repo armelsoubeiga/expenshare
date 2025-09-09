@@ -280,9 +280,20 @@ export function ProjectSettingsForm({ isOpen, onClose, onSuccess, projectId, act
       await loadProjectData()
       setNewUserId(null)
       
-    } catch (error) {
+    } catch (error: any) {
       console.error("Failed to add user to project:", error)
-      setError("Erreur lors de l'ajout de l'utilisateur au projet")
+      const msg = (error && error.message) ? String(error.message) : "Erreur lors de l'ajout de l'utilisateur au projet"
+      setError(msg)
+      // Avertissements spécifiques
+      if (msg.includes('Seul le propriétaire du projet') || msg.includes("L'administrateur doit faire partie du projet")) {
+        toast({
+          title: "Action non autorisée",
+          description: msg,
+          variant: "destructive"
+        })
+      } else {
+        toast({ title: "Échec de l'ajout", description: msg, variant: "destructive" })
+      }
     } finally {
       setIsAddingUser(false)
     }
@@ -299,9 +310,26 @@ export function ProjectSettingsForm({ isOpen, onClose, onSuccess, projectId, act
   // Recharger la liste depuis la DB
   await loadProjectData()
       
-    } catch (error) {
+    } catch (error: any) {
       console.error("Failed to remove user from project:", error)
-      setError("Erreur lors de la suppression de l'utilisateur du projet")
+      const msg = (error && error.message) ? String(error.message) : "Erreur lors de la suppression de l'utilisateur du projet"
+      setError(msg)
+      // Avertissements spécifiques
+      if (msg.includes('Impossible de retirer le propriétaire')) {
+        toast({
+          title: "Propriétaire non retirable",
+          description: "Vous ne pouvez pas retirer le propriétaire du projet.",
+          variant: "destructive"
+        })
+      } else if (msg.includes('Seul le propriétaire du projet') || msg.includes('administrateur')) {
+        toast({
+          title: "Action non autorisée",
+          description: "Vous n'avez pas la permission de retirer cet utilisateur.",
+          variant: "destructive"
+        })
+      } else {
+        toast({ title: "Échec de la suppression", description: msg, variant: "destructive" })
+      }
     } finally {
   setIsRemovingUser(null)
     }
@@ -595,7 +623,17 @@ export function ProjectSettingsForm({ isOpen, onClose, onSuccess, projectId, act
                           <Button 
                             variant="ghost" 
                             size="sm"
-                            onClick={() => removeUserFromProject(user.id)}
+                            onClick={() => {
+                              if (user.role === 'owner') {
+                                toast({
+                                  title: "Propriétaire non retirable",
+                                  description: "Vous ne pouvez pas retirer le propriétaire du projet.",
+                                  variant: "destructive"
+                                })
+                                return
+                              }
+                              removeUserFromProject(user.id)
+                            }}
                             disabled={isRemovingUser === user.id}
                           >
                             {isRemovingUser === user.id ? (

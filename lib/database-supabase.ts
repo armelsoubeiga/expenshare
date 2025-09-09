@@ -116,6 +116,40 @@ class SupabaseDatabase {
         delete: async () => {
           try {
             if (field === 'id') {
+              // Authorization: only admin or project owner can delete the project
+              const uid = this.getCurrentUserId()
+              if (!uid) {
+                throw new Error('Non authentifié')
+              }
+
+              // Is admin?
+              let isAdmin = false
+              try {
+                const { data: adminRow } = await supabase
+                  .from('users')
+                  .select('id')
+                  .eq('id', uid)
+                  .eq('is_admin', true)
+                  .maybeSingle()
+                isAdmin = !!adminRow
+              } catch {}
+
+              if (!isAdmin) {
+                // If not admin, ensure current user is the project owner
+                const { data: proj, error: projErr } = await supabase
+                  .from('projects')
+                  .select('created_by')
+                  .eq('id', Number(value))
+                  .maybeSingle()
+                if (projErr) {
+                  console.error('[ExpenseShare] Error fetching project for delete auth:', projErr)
+                  throw new Error(projErr.message)
+                }
+                if (!proj || String(proj.created_by) !== String(uid)) {
+                  throw new Error("Seul le propriétaire du projet ou un administrateur peut supprimer ce projet.")
+                }
+              }
+
               const { error } = await supabase
                 .from('projects')
                 .delete()
@@ -510,6 +544,93 @@ class SupabaseDatabase {
     }
   }
 
+  /**
+   * Récupère les transactions créées après une date donnée pour les projets autorisés
+   * de l'utilisateur courant, avec métadonnées (projet, utilisateur, catégories).
+   */
+  async getTransactionsSince(sinceISO: string, limit = 50) {
+    try {
+      const uid = this.getCurrentUserId()
+      if (!uid) return []
+      const authorized = await this.getAuthorizedProjectIds(uid)
+      if (!authorized.length) return []
+
+      // 1) Transactions après sinceISO
+      const { data: tx, error: txErr } = await supabase
+        .from('transactions')
+        .select('*')
+        .in('project_id', authorized)
+        .gt('created_at', sinceISO)
+        .order('created_at', { ascending: false })
+        .limit(limit)
+      if (txErr) return []
+
+      const ids = (tx || []).map((t: any) => t.id)
+      const projIds = Array.from(new Set((tx || []).map((t: any) => t.project_id)))
+      const userIds = Array.from(new Set((tx || []).map((t: any) => String(t.user_id))))
+      const catIds = Array.from(new Set((tx || []).map((t: any) => t.category_id).filter(Boolean)))
+
+      // 2) Notes
+      const { data: notes } = ids.length
+        ? await supabase.from('notes').select('*').in('transaction_id', ids)
+        : { data: [] as any[] }
+
+      // 3) Métadonnées
+      const [projectsRes, usersRes, categoriesRes] = await Promise.all([
+        projIds.length ? supabase.from('projects').select('id, name, icon, color').in('id', projIds) : Promise.resolve({ data: [] as any[], error: null } as any),
+        userIds.length ? supabase.from('users').select('id, name').in('id', userIds) : Promise.resolve({ data: [] as any[], error: null } as any),
+        catIds.length ? supabase.from('categories').select('id, name, parent_id').in('id', catIds) : Promise.resolve({ data: [] as any[], error: null } as any)
+      ])
+
+      const projects: any[] = (projectsRes as any)?.data || []
+      const users: any[] = (usersRes as any)?.data || []
+      const categories: any[] = (categoriesRes as any)?.data || []
+
+      const projMap = new Map<any, any>(projects.map((p: any) => [p.id, p]))
+      const userMap = new Map<any, any>(users.map((u: any) => [String(u.id), u]))
+      const catMap = new Map<any, any>(categories.map((c: any) => [c.id, c]))
+
+      // Parents
+      const parentIdsAny: any[] = Array.from(new Set(categories.map((c: any) => c.parent_id).filter((v: any) => v != null)))
+      const { data: parents } = parentIdsAny.length
+        ? await supabase.from('categories').select('id, name').in('id', parentIdsAny as number[])
+        : { data: [] as any[] }
+      const parentMap = new Map<any, any>((parents || []).map((p: any) => [p.id, p]))
+
+      return (tx || []).map((t: any) => {
+        const n = (notes || []).filter((x) => x.transaction_id === t.id)
+        const proj: any = projMap.get(t.project_id)
+        const usr: any = userMap.get(String(t.user_id))
+        const cat: any = t.category_id ? catMap.get(t.category_id) : null
+        const parent: any = cat?.parent_id ? parentMap.get(cat.parent_id) : null
+        return {
+          id: t.id,
+          project_id: t.project_id,
+          user_id: t.user_id,
+          category_id: t.category_id,
+          type: t.type,
+          amount: t.amount,
+          title: t.title,
+          description: t.description,
+          created_at: t.created_at,
+          project_name: proj?.name,
+          project_icon: proj?.icon,
+          project_color: proj?.color,
+          user_name: usr?.name,
+          category_name: cat?.name,
+          parent_category_name: parent?.name,
+          has_text: n.some((nn) => nn.content_type === 'text'),
+          has_document: n.some((nn) => nn.content_type === 'text' && nn.file_path),
+          has_image: n.some((nn) => nn.content_type === 'image'),
+          has_audio: n.some((nn) => nn.content_type === 'audio'),
+        }
+      })
+    } catch (e) {
+      console.error('[ExpenseShare] getTransactionsSince failed:', e)
+      return []
+    }
+  }
+
   async getNotesByTransaction(transactionId: number) {
     const { data, error } = await supabase.from('notes').select('*').eq('transaction_id', transactionId);
     if (error) return [];
@@ -576,6 +697,27 @@ class SupabaseDatabase {
     const { data, error } = await supabase.from('transactions').insert(toInsert).select('id').single();
     if (error) throw new Error(error.message);
     return data!.id as number;
+  }
+
+  /**
+   * Compte les transactions créées après une date donnée pour les projets autorisés de l'utilisateur courant.
+   */
+  async getNewTransactionsCountSince(sinceISO: string): Promise<number> {
+    try {
+      const uid = this.getCurrentUserId()
+      if (!uid) return 0
+      const authorized = await this.getAuthorizedProjectIds(uid)
+      if (!authorized.length) return 0
+      const { count, error } = await supabase
+        .from('transactions')
+        .select('id', { head: true, count: 'exact' })
+        .in('project_id', authorized as number[])
+        .gt('created_at', sinceISO)
+      if (error) return 0
+      return count || 0
+    } catch {
+      return 0
+    }
   }
 
   /**
@@ -771,6 +913,55 @@ class SupabaseDatabase {
   project_users = {
     add: async (data: ProjectUser) => {
       try {
+        // Authorization: only project owner or an admin who is a member of the project can add users
+        const uid = this.getCurrentUserId()
+        if (!uid) throw new Error('Non authentifié')
+
+        // Load project owner
+        const { data: proj, error: projErr } = await supabase
+          .from('projects')
+          .select('id, created_by')
+          .eq('id', Number(data.project_id))
+          .maybeSingle()
+        if (projErr) {
+          console.error('[ExpenseShare] Error fetching project for add auth:', projErr)
+          throw new Error(projErr.message)
+        }
+        if (!proj) throw new Error('Projet introuvable')
+
+        // Determine admin
+        let isAdmin = false
+        try {
+          const { data: adminRow } = await supabase
+            .from('users')
+            .select('id')
+            .eq('id', uid)
+            .eq('is_admin', true)
+            .maybeSingle()
+          isAdmin = !!adminRow
+        } catch {}
+
+        if (String(proj.created_by) !== String(uid)) {
+          // Not the owner → only allow if admin AND already a member of this project
+          if (!isAdmin) {
+            throw new Error("Seul le propriétaire du projet ou un administrateur membre du projet peut ajouter des utilisateurs.")
+          }
+          const { data: membership, error: memErr } = await supabase
+            .from('project_users')
+            .select('user_id')
+            .eq('project_id', Number(proj.id))
+            .eq('user_id', String(uid))
+            .maybeSingle()
+          if (memErr) {
+            console.error('[ExpenseShare] Error checking admin membership for add:', memErr)
+            throw new Error(memErr.message)
+          }
+          if (!membership) {
+            throw new Error("L'administrateur doit faire partie du projet pour ajouter des utilisateurs.")
+          }
+        }
+
+        // Build payload
         const payload: any = { 
           ...data, 
           user_id: String(data.user_id),
@@ -781,7 +972,7 @@ class SupabaseDatabase {
           payload.added_at = new Date().toISOString()
         }
         
-        console.log('[ExpenseShare] Adding project user:', payload)
+  console.log('[ExpenseShare] Adding project user:', payload)
         const { error } = await supabase.from('project_users').insert(payload)
         
         if (error) {
@@ -798,6 +989,41 @@ class SupabaseDatabase {
     // Supprimer un utilisateur d'un projet (par project_id + user_id)
     remove: async (project_id: number, user_id: string | number) => {
       try {
+        // Prevent removing the project owner. Only allow if target is not the owner.
+        // Admins also should not remove the owner via membership removal; they should delete the project instead.
+        const { data: proj, error: projErr } = await supabase
+          .from('projects')
+          .select('created_by')
+          .eq('id', Number(project_id))
+          .maybeSingle()
+        if (projErr) {
+          console.error('[ExpenseShare] Error checking project owner before removal:', projErr)
+          throw new Error(projErr.message)
+        }
+        if (proj && String(proj.created_by) === String(user_id)) {
+          throw new Error("Impossible de retirer le propriétaire du projet.")
+        }
+
+        // Optional: only allow owner or admin to remove other members
+        const uid = this.getCurrentUserId()
+        if (!uid) throw new Error('Non authentifié')
+        let isAdmin = false
+        try {
+          const { data: adminRow } = await supabase
+            .from('users')
+            .select('id')
+            .eq('id', uid)
+            .eq('is_admin', true)
+            .maybeSingle()
+          isAdmin = !!adminRow
+        } catch {}
+        if (!isAdmin) {
+          // Ensure caller is the project owner to remove others
+          if (!proj || String(proj.created_by) !== String(uid)) {
+            throw new Error("Seul le propriétaire du projet ou un administrateur peut retirer des membres.")
+          }
+        }
+
         const { error } = await supabase
           .from('project_users')
           .delete()
@@ -1111,6 +1337,20 @@ class SupabaseDatabase {
           console.error('[ExpenseShare] Error adding transaction:', error)
           throw new Error(error.message)
         }
+
+        // Dispatch a browser event to notify UI about the new transaction
+        try {
+          if (typeof window !== 'undefined' && inserted?.id) {
+            const detail = {
+              transactionId: inserted.id,
+              projectId: Number(payload.project_id),
+              userId: String(payload.user_id),
+              type: payload.type,
+              amount: Number(payload.amount || 0),
+            }
+            window.dispatchEvent(new CustomEvent('expenshare:new-transaction', { detail }))
+          }
+        } catch {}
         
         return inserted?.id
       } catch (error: any) {
