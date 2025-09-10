@@ -3,6 +3,16 @@
 import { useEffect, useState } from "react"
 import { db } from "@/lib/database"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import {
+  AlertDialog as ConfirmDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent as ConfirmDialogContent,
+  AlertDialogDescription as ConfirmDialogDescription,
+  AlertDialogFooter as ConfirmDialogFooter,
+  AlertDialogHeader as ConfirmDialogHeader,
+  AlertDialogTitle as ConfirmDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Trash2, Shield } from "lucide-react"
@@ -14,10 +24,11 @@ interface UserManagementProps {
 
 export function UserManagement({ isOpen, onClose }: UserManagementProps) {
   const [users, setUsers] = useState<any[]>([])
-  const [adminId, setAdminId] = useState<number | null>(null)
-  const [currentUserId, setCurrentUserId] = useState<number | null>(null)
+  const [adminId, setAdminId] = useState<string | null>(null)
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [confirmUserId, setConfirmUserId] = useState<string | null>(null)
 
   useEffect(() => {
     if (!isOpen) return
@@ -27,9 +38,9 @@ export function UserManagement({ isOpen, onClose }: UserManagementProps) {
         const list = await db.users.toArray()
         setUsers(list)
   const aId = await db.getAdminUserId()
-  setAdminId(aId ? Number(aId) : null)
-        const storedUser = localStorage.getItem("expenshare_current_user") || localStorage.getItem("expenshare_user")
-        if (storedUser) setCurrentUserId(JSON.parse(storedUser).id)
+  setAdminId(aId ? String(aId) : null)
+  const storedUser = localStorage.getItem("expenshare_current_user") || localStorage.getItem("expenshare_user")
+        if (storedUser) setCurrentUserId(String(JSON.parse(storedUser).id))
       } catch (e: any) {
         setError(e?.message || "Erreur de chargement")
       }
@@ -37,28 +48,31 @@ export function UserManagement({ isOpen, onClose }: UserManagementProps) {
     init()
   }, [isOpen])
 
-  const canManage = currentUserId && adminId && currentUserId === adminId
+  const canManage = !!currentUserId && !!adminId && String(currentUserId) === String(adminId)
 
   const refresh = async () => {
     const list = await db.users.toArray()
     setUsers(list)
   }
 
-  const handleDelete = async (userId: number) => {
+  const actuallyDelete = async (userId: string) => {
     if (!canManage) return
-    if (adminId === userId) return
-    const confirm = window.confirm("Supprimer cet utilisateur ? Ses projets et opérations seront réassignés à l'admin.")
-    if (!confirm) return
+    if (String(adminId) === String(userId)) return
     setLoading(true)
     setError(null)
     try {
   await db.deleteUser(String(userId))
-      await refresh()
+  await refresh()
     } catch (e: any) {
       setError(e?.message || "Erreur lors de la suppression")
     } finally {
       setLoading(false)
     }
+  }
+  const handleDelete = (userId: number | string) => {
+    if (!canManage) return
+    if (String(adminId) === String(userId)) return
+    setConfirmUserId(String(userId))
   }
 
   return (
@@ -80,7 +94,7 @@ export function UserManagement({ isOpen, onClose }: UserManagementProps) {
             <div key={u.id} className="flex items-center justify-between border rounded-md px-3 py-2">
               <div className="flex items-center gap-2">
                 <span className="font-medium">{u.name}</span>
-                {adminId === u.id ? (
+                {String(adminId) === String(u.id) ? (
                   <span className="text-xs px-2 py-0.5 rounded bg-muted text-muted-foreground">admin</span>
                 ) : null}
                 {currentUserId === u.id ? (
@@ -91,8 +105,8 @@ export function UserManagement({ isOpen, onClose }: UserManagementProps) {
                 <Button
                   variant="destructive"
                   size="sm"
-                  disabled={!canManage || adminId === u.id || loading}
-                  onClick={() => handleDelete(u.id)}
+                  disabled={!canManage || String(adminId) === String(u.id) || loading}
+                  onClick={() => handleDelete(String(u.id))}
                 >
                   <Trash2 className="w-4 h-4 mr-1" /> Supprimer
                 </Button>
@@ -104,6 +118,30 @@ export function UserManagement({ isOpen, onClose }: UserManagementProps) {
           <Button variant="outline" onClick={onClose}>Fermer</Button>
         </div>
       </DialogContent>
+      {/* Confirmation dialog */}
+      <ConfirmDialog open={!!confirmUserId} onOpenChange={(open) => !open && setConfirmUserId(null)}>
+        <ConfirmDialogContent>
+          <ConfirmDialogHeader>
+            <ConfirmDialogTitle>Confirmation</ConfirmDialogTitle>
+            <ConfirmDialogDescription>
+              Supprimer cet utilisateur ? Ses projets et opérations seront réassignés à l'admin.
+            </ConfirmDialogDescription>
+          </ConfirmDialogHeader>
+          <ConfirmDialogFooter>
+            <AlertDialogCancel onClick={() => setConfirmUserId(null)}>Annuler</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={async () => {
+                if (confirmUserId) {
+                  await actuallyDelete(confirmUserId)
+                  setConfirmUserId(null)
+                }
+              }}
+            >
+              OK
+            </AlertDialogAction>
+          </ConfirmDialogFooter>
+        </ConfirmDialogContent>
+      </ConfirmDialog>
     </Dialog>
   )
 }
