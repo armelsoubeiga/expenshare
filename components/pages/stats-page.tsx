@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -144,6 +144,34 @@ export function StatsPage() {
 
   const selectedProject = projects.find((p) => p.id.toString() === selectedProjectId)
 
+  // Données 'Répartition des Budgets' basées sur les transactions de type budget, étiquetées par titre
+  const budgetsPieData = useMemo(() => {
+    if (!stats || !stats.transactions) return [] as { name: string; value: number; color: string }[]
+
+    const getAmt = (t: any) => {
+      if (displayCurrency === 'CFA') return Number(t.amount_cfa ?? 0)
+      if (displayCurrency === 'USD') return Number(t.amount_usd ?? 0)
+      return Number(t.amount_eur ?? t.amount ?? 0)
+    }
+
+    const map = new Map<string, number>()
+    for (const t of stats.transactions) {
+      if (t.type !== 'budget') continue
+      const key = (typeof t.title === 'string' && t.title.trim().length > 0) ? t.title.trim() : 'Sans titre'
+      const val = getAmt(t)
+      map.set(key, (map.get(key) ?? 0) + val)
+    }
+
+    const colors = [
+      "#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899",
+      "#14b8a6", "#f97316", "#6366f1", "#84cc16", "#f43f5e", "#06b6d4",
+    ]
+
+    // Ordonner par montant décroissant pour une lecture plus claire
+    const entries = Array.from(map.entries()).sort((a, b) => b[1] - a[1])
+    return entries.map(([name, value], idx) => ({ name, value, color: colors[idx % colors.length] }))
+  }, [stats, displayCurrency])
+
   if (projectsLoading) {
     return (
       <div className="p-4 space-y-6">
@@ -283,16 +311,16 @@ export function StatsPage() {
                   </Card>
                 )}
 
-                {stats.budgetsByCategory.length > 0 && (
+                {budgetsPieData.length > 0 && (
                   <Card>
                     <CardHeader>
                       <CardTitle>Répartition des Budgets</CardTitle>
-                      <CardDescription>Budgets par catégorie</CardDescription>
+                      <CardDescription>Budgets par titre</CardDescription>
                     </CardHeader>
                     <CardContent>
                       <CustomPieChart
-                        data={stats.budgetsByCategory}
-                        title="Budgets par Catégorie"
+                        data={budgetsPieData}
+                        title="Budgets par Titre"
                         size={200}
                         currency={currencyForIntl as any}
                       />

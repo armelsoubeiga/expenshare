@@ -18,6 +18,9 @@ interface CustomPieChartProps {
 }
 
 export function CustomPieChart({ data, title, centerLabel, centerValue, size = 200, currency = "EUR" }: CustomPieChartProps) {
+  // Quand beaucoup d'éléments, on limite la légende et on active le scroll
+  const tooManyLegendItems = (data?.length ?? 0) > 12
+  const containerHeight = size + (tooManyLegendItems ? 120 : 80)
   // Affichage label catégorie/sous-catégorie
   const renderCustomizedLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent, name, parent }: any) => {
     if (percent < 0.08) return null // Don't show labels for slices < 8%
@@ -84,8 +87,8 @@ export function CustomPieChart({ data, title, centerLabel, centerValue, size = 2
   return (
     <div className="w-full">
       <h3 className="text-lg font-semibold text-center mb-4">{title}</h3>
-      <ResponsiveContainer width="100%" height={size + 80}>
-        <PieChart>
+      <ResponsiveContainer width="100%" height={containerHeight}>
+        <PieChart margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
           <Pie
             data={dataWithTotal}
             cx="50%"
@@ -106,9 +109,16 @@ export function CustomPieChart({ data, title, centerLabel, centerValue, size = 2
           <Tooltip content={<CustomTooltip />} />
           <Legend
             verticalAlign="bottom"
+            align="center"
+            layout="horizontal"
             height={36}
+            wrapperStyle={{
+              maxHeight: tooManyLegendItems ? 88 : undefined,
+              overflowY: tooManyLegendItems ? 'auto' : undefined,
+              paddingTop: 8,
+            }}
             formatter={(value, entry) => (
-              <span style={{ color: entry.color }} className="text-sm font-medium">
+              <span style={{ color: entry.color }} className="text-xs sm:text-sm font-medium">
                 {value}
               </span>
             )}

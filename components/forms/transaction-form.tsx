@@ -368,9 +368,11 @@ export function TransactionForm({ isOpen, onClose, onSuccess }: TransactionFormP
                         document.getElementById("image-upload-btn")?.click();
                       }}
                       className="flex-1"
+                      aria-label="Ajouter des images"
+                      title="Images"
                     >
-                      <Camera className="h-4 w-4 mr-2" />
-                      Images
+                      <Camera className="h-4 w-4 sm:mr-2" />
+                      <span className="hidden sm:inline">Images</span>
                     </Button>
                     
                     <Button
@@ -386,9 +388,13 @@ export function TransactionForm({ isOpen, onClose, onSuccess }: TransactionFormP
                         }
                       }}
                       className="flex-1"
+                      aria-label={isRecordingAudio ? "Arrêter l'enregistrement audio" : "Ajouter un enregistrement audio"}
+                      title={isRecordingAudio ? "Arrêter l'enregistrement" : "Audio"}
                     >
-                      <Mic className="h-4 w-4 mr-2" />
-                      {isRecordingAudio ? `Arrêter (${Math.floor(recordingSeconds/60)}:${String(recordingSeconds%60).padStart(2,'0')})` : "Audio"}
+                      <Mic className="h-4 w-4 sm:mr-2" />
+                      <span className="hidden sm:inline">
+                        {isRecordingAudio ? `Arrêter (${Math.floor(recordingSeconds/60)}:${String(recordingSeconds%60).padStart(2,'0')})` : "Audio"}
+                      </span>
                     </Button>
                     
                     <Button
@@ -400,9 +406,11 @@ export function TransactionForm({ isOpen, onClose, onSuccess }: TransactionFormP
                         document.getElementById("file-upload-btn")?.click();
                       }}
                       className="flex-1"
+                      aria-label="Ajouter des fichiers"
+                      title="Fichiers"
                     >
-                      <Upload className="h-4 w-4 mr-2" />
-                      Fichiers
+                      <Upload className="h-4 w-4 sm:mr-2" />
+                      <span className="hidden sm:inline">Fichiers</span>
                     </Button>
                     
                     {/* Composants MediaUpload invisibles mais liés à l'état */}
@@ -445,8 +453,11 @@ export function TransactionForm({ isOpen, onClose, onSuccess }: TransactionFormP
                       size="sm"
                       onClick={() => setShowDescriptionDialog(true)}
                       className="flex-1"
+                      aria-label="Ajouter une note"
+                      title="Note"
                     >
                       <FileText className="h-4 w-4" />
+                      <span className="hidden sm:inline ml-2">Note</span>
                     </Button>
                   </div>
 

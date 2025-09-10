@@ -16,6 +16,7 @@ import { db } from "@/lib/database"
 import { UserSettings } from "@/components/settings/user-settings"
 import { PinChange } from "@/components/auth/pin-change"
 import { UserManagement } from "@/components/settings/user-management"
+import { ExportDialog } from "@/components/export/export-dialog"
 
 interface TopHeaderProps {
   onLogout: () => void
@@ -51,6 +52,7 @@ export function TopHeader({ onLogout }: TopHeaderProps) {
   const [showSettings, setShowSettings] = useState(false)
   const [showPinChange, setShowPinChange] = useState(false)
   const [showUserMgmt, setShowUserMgmt] = useState(false)
+  const [showExport, setShowExport] = useState(false)
   const [isAdmin, setIsAdmin] = useState(false)
   const [unreadCount, setUnreadCount] = useState(0)
   const [notifItems, setNotifItems] = useState<NotifItem[]>([])
@@ -202,63 +204,7 @@ export function TopHeader({ onLogout }: TopHeaderProps) {
   }
 
   const handleExportData = async () => {
-    try {
-      // Créer un toast pour notification
-      const toast = document.createElement("div")
-      toast.className = "fixed top-4 right-4 bg-card border border-border shadow-lg rounded-lg p-4 z-50 flex items-center"
-      toast.style.maxWidth = "300px"
-      // Spinner
-      const spinner = document.createElement("div")
-      spinner.className = "animate-spin rounded-full h-5 w-5 border-b-2 border-primary mr-3"
-      toast.appendChild(spinner)
-      // Message
-      const message = document.createElement("div")
-      message.textContent = "Export des données en cours..."
-      toast.appendChild(message)
-      document.body.appendChild(toast)
-
-      // Récupérer toutes les transactions (pas seulement les 10 dernières)
-      const allTx = await db.getRecentTransactions(10000)
-      // Colonnes à exporter (sauf Note)
-      const headers = [
-        'Type', 'Titre', 'Catégorie', 'Sous-catégorie', 'Montant', 'Projet', 'Utilisateur', 'Date'
-      ]
-      const rows = allTx.map((t: any) => [
-        t.type === 'expense' ? 'Dépense' : 'Budget',
-        t.title || '',
-        t.parent_category_name || t.category_name || '',
-        t.parent_category_name ? t.category_name : '',
-        t.amount,
-        t.project_name,
-        t.user_name,
-        t.created_at ? new Date(t.created_at).toLocaleString('fr-FR') : ''
-      ])
-      const csv = [headers, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\r\n')
-      const blob = new Blob([csv], { type: 'text/csv' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = 'expenshare-transactions.csv'
-      document.body.appendChild(a)
-      a.click()
-      setTimeout(() => {
-        document.body.removeChild(a)
-        URL.revokeObjectURL(url)
-      }, 100)
-
-      // Succès
-      spinner.remove()
-      const checkIcon = document.createElement("div")
-      checkIcon.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-green-500" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" /></svg>'
-      toast.insertBefore(checkIcon, message)
-      message.textContent = "Données exportées avec succès!"
-      setTimeout(() => {
-        toast.remove()
-      }, 3000)
-    } catch (error) {
-      console.error("Export failed:", error)
-      alert("Erreur lors de l'export des données")
-    }
+    setShowExport(true)
   }
 
   const handleImportData = () => {
@@ -440,6 +386,10 @@ export function TopHeader({ onLogout }: TopHeaderProps) {
       <UserManagement
         isOpen={showUserMgmt}
         onClose={() => setShowUserMgmt(false)}
+      />
+      <ExportDialog
+        isOpen={showExport}
+        onClose={() => setShowExport(false)}
       />
     </header>
   )
