@@ -425,11 +425,11 @@ export function ExportDialog({ isOpen, onClose }: ExportDialogProps) {
             <div className="flex items-center gap-4">
               <label className="flex items-center gap-2 text-sm">
                 <Checkbox checked={exportCsv} onCheckedChange={(v) => setExportCsv(!!v)} />
-                CSV (historique sans la colonne Note)
+                CSV
               </label>
               <label className="flex items-center gap-2 text-sm">
                 <Checkbox checked={exportPdf} disabled={selectedProjectId === 'all'} onCheckedChange={(v) => setExportPdf(!!v)} />
-                PDF (rapport stylé){selectedProjectId === 'all' ? ' — non disponible pour tous les projets' : ''}
+                PDF{selectedProjectId === 'all' ? ' — non disponible pour tous les projets' : ''}
               </label>
             </div>
           </div>
