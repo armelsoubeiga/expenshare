@@ -34,7 +34,7 @@ export function StatsPage() {
   }, [])
 
   const { projects, isLoading: projectsLoading } = useUserProjects(userId || 0)
-  const { stats, isLoading: statsLoading } = useProjectStats(selectedProjectId ? Number.parseInt(selectedProjectId) : 0)
+  const { stats, isLoading: statsLoading } = useProjectStats(selectedProjectId ? Number.parseInt(selectedProjectId) : 0, displayCurrency === 'CFA' ? 'CFA' : displayCurrency)
 
   // Sélectionner automatiquement le premier projet si aucun n'est sélectionné
   useEffect(() => {
@@ -53,7 +53,8 @@ export function StatsPage() {
 
   const loadCategoryHierarchy = async (projectId: number) => {
     try {
-      const hierarchy = await db.getProjectCategoryHierarchy(projectId)
+      const cur = displayCurrency === 'CFA' ? 'CFA' : displayCurrency
+      const hierarchy = await db.getProjectCategoryHierarchy(projectId, cur as any)
       setCategoryHierarchy(hierarchy)
     } catch (error) {
       console.error("Failed to load category hierarchy:", error)
@@ -95,6 +96,13 @@ export function StatsPage() {
     return () => window.removeEventListener('expenshare:project-currency-changed', onProjectCurrencyChanged)
   }, [selectedProjectId])
 
+  // Recharger la hiérarchie quand la devise change
+  useEffect(() => {
+    if (selectedProjectId) {
+      loadCategoryHierarchy(Number.parseInt(selectedProjectId))
+    }
+  }, [displayCurrency])
+
   const convertAmount = (amountEur: number) => {
     switch (displayCurrency) {
       case "CFA":
@@ -107,20 +115,22 @@ export function StatsPage() {
   }
 
   const currencyForIntl = displayCurrency === "CFA" ? "XOF" : displayCurrency
-  const formatAmount = (amountEur: number) => {
-    const value = convertAmount(amountEur)
+  const formatAmount = (amount: number) => {
+    return new Intl.NumberFormat("fr-FR", { style: "currency", currency: currencyForIntl }).format(amount)
+  }
+
+  // Affichage ligne par ligne: utiliser la colonne native si disponible
+  const formatTransactionAmount = (tx: any) => {
+    let value: number | null = null
+    if (displayCurrency === 'CFA' && tx.amount_cfa != null) value = Number(tx.amount_cfa)
+    else if (displayCurrency === 'USD' && tx.amount_usd != null) value = Number(tx.amount_usd)
+    else if (displayCurrency === 'EUR' && tx.amount_eur != null) value = Number(tx.amount_eur)
+    if (value == null) value = convertAmount(Number(tx.amount_eur ?? tx.amount ?? 0))
     return new Intl.NumberFormat("fr-FR", { style: "currency", currency: currencyForIntl }).format(value)
   }
 
-  // Convertir hiérarchie pour l'affichage (valeurs converties)
-  const mapHierarchyValues = (nodes: any[]): any[] =>
-    nodes.map(n => ({
-      ...n,
-      value: convertAmount(Number(n.value || 0)),
-      expenseValue: n.expenseValue !== undefined ? convertAmount(Number(n.expenseValue)) : undefined,
-      budgetValue: n.budgetValue !== undefined ? convertAmount(Number(n.budgetValue)) : undefined,
-      children: n.children ? mapHierarchyValues(n.children) : undefined,
-    }))
+  // La hiérarchie est déjà en devise cible
+  const mapHierarchyValues = (nodes: any[]): any[] => nodes
 
   const getBalanceColor = (balance: number) => {
     if (balance > 0) return "text-green-600"
@@ -262,9 +272,8 @@ export function StatsPage() {
                     <CardContent>
                       <CustomPieChart
                         data={stats.expensesByCategory.map(d => {
-                          // Si d.parent existe (propriété optionnelle), construire le label parent/name
                           const parent = (d as any).parent as string | undefined
-                          return { ...d, value: convertAmount(d.value), name: parent ? `${parent}/${d.name}` : d.name }
+                          return { ...d, name: parent ? `${parent}/${d.name}` : d.name }
                         })}
                         title="Dépenses par Catégorie"
                         size={200}
@@ -282,7 +291,7 @@ export function StatsPage() {
                     </CardHeader>
                     <CardContent>
                       <CustomPieChart
-                        data={stats.budgetsByCategory.map(d => ({ ...d, value: convertAmount(d.value) }))}
+                        data={stats.budgetsByCategory}
                         title="Budgets par Catégorie"
                         size={200}
                         currency={currencyForIntl as any}
@@ -362,10 +371,18 @@ export function StatsPage() {
                                   ? `${transaction.parent_category_name}/${transaction.category_name}`
                                   : (transaction.category_name || transaction.title || '—')}
                               </TableCell>
-                              <TableCell>{transaction.parent_category_name || transaction.category_name || "Sans catégorie"}</TableCell>
-                              <TableCell>{transaction.parent_category_name ? transaction.category_name : ""}</TableCell>
+                              <TableCell>
+                                {transaction.type === 'budget'
+                                  ? '-'
+                                  : (transaction.parent_category_name || transaction.category_name || '-')}
+                              </TableCell>
+                              <TableCell>
+                                {transaction.type === 'budget'
+                                  ? '-'
+                                  : (transaction.parent_category_name ? transaction.category_name : '')}
+                              </TableCell>
                               <TableCell className="font-medium">
-                                {formatAmount(Number(transaction.amount))}
+                                {formatTransactionAmount(transaction)}
                               </TableCell>
                               <TableCell>{transaction.user_name}</TableCell>
                               <TableCell>

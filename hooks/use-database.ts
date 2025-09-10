@@ -40,7 +40,7 @@ export function useDatabase() {
   }
 }
 
-export function useGlobalStats() {
+export function useGlobalStats(displayCurrency?: 'EUR'|'CFA'|'USD') {
   const [stats, setStats] = useState({
     totalExpenses: 0,
     totalBudgets: 0,
@@ -60,7 +60,23 @@ export function useGlobalStats() {
     setIsLoading(true)
     try {
       const globalStats = await db.getGlobalStats()
-      setStats(globalStats)
+      // Choisir les totaux selon la devise demandée (si fournie)
+      if (displayCurrency) {
+        const cur = displayCurrency
+        const totals = cur === 'CFA'
+          ? { exp: (globalStats.totalExpenses_cfa ?? 0), bud: (globalStats.totalBudgets_cfa ?? 0) }
+          : cur === 'USD'
+          ? { exp: (globalStats.totalExpenses_usd ?? 0), bud: (globalStats.totalBudgets_usd ?? 0) }
+          : { exp: (globalStats.totalExpenses_eur ?? globalStats.totalExpenses ?? 0), bud: (globalStats.totalBudgets_eur ?? globalStats.totalBudgets ?? 0) }
+        setStats({
+          ...globalStats,
+          totalExpenses: totals.exp,
+          totalBudgets: totals.bud,
+          balance: totals.bud - totals.exp,
+        })
+      } else {
+        setStats(globalStats)
+      }
     } catch (error) {
       console.error("Failed to load global stats:", error)
     } finally {
@@ -70,7 +86,7 @@ export function useGlobalStats() {
 
   useEffect(() => {
     loadStats()
-  }, [isReady, db])
+  }, [isReady, db, displayCurrency])
 
   return { stats, isLoading, refetch: loadStats }
 }
@@ -129,7 +145,7 @@ export function useUserProjects(userId: number) {
   return { projects, isLoading, refetch: loadProjects }
 }
 
-export function useProjectStats(projectId: number) {
+export function useProjectStats(projectId: number, currency?: 'EUR'|'CFA'|'USD') {
   const [stats, setStats] = useState({
   totalExpenses: 0,
   totalBudgets: 0,
@@ -155,13 +171,19 @@ export function useProjectStats(projectId: number) {
   const expenses = transactions.filter((t: any) => t.type === "expense")
   const budgets = transactions.filter((t: any) => t.type === "budget")
 
-  const totalExpenses = expenses.reduce((sum: number, t: any) => sum + Number(t.amount), 0)
-  const totalBudgets = budgets.reduce((sum: number, t: any) => sum + Number(t.amount), 0)
+  const getAmt = (t: any) => {
+    if (currency === 'CFA') return Number(t.amount_cfa ?? 0)
+    if (currency === 'USD') return Number(t.amount_usd ?? 0)
+    return Number(t.amount_eur ?? t.amount ?? 0)
+  }
+
+  const totalExpenses = expenses.reduce((sum: number, t: any) => sum + getAmt(t), 0)
+  const totalBudgets = budgets.reduce((sum: number, t: any) => sum + getAmt(t), 0)
         const balance = totalBudgets - totalExpenses
 
         // Group by categories
-        const expensesByCategory = groupTransactionsByCategory(expenses)
-        const budgetsByCategory = groupTransactionsByCategory(budgets)
+  const expensesByCategory = groupTransactionsByCategory(expenses, currency)
+  const budgetsByCategory = groupTransactionsByCategory(budgets, currency)
 
         setStats({
           totalExpenses,
@@ -179,7 +201,7 @@ export function useProjectStats(projectId: number) {
     }
 
     loadProjectStats()
-  }, [isReady, db, projectId, reloadTick])
+  }, [isReady, db, projectId, reloadTick, currency])
 
   // Rafraîchir sur événement global (ex: suppression transaction)
   useEffect(() => {
@@ -191,7 +213,7 @@ export function useProjectStats(projectId: number) {
   return { stats, isLoading, refetch: () => setIsLoading(true) }
 }
 
-function groupTransactionsByCategory(transactions: any[]) {
+function groupTransactionsByCategory(transactions: any[], currency?: 'EUR'|'CFA'|'USD') {
   const categoryMap = new Map()
 
   transactions.forEach((transaction) => {
@@ -202,7 +224,10 @@ function groupTransactionsByCategory(transactions: any[]) {
     } else {
       label = transaction.category_name || "Sans catégorie"
     }
-    const amount = Number(transaction.amount)
+  let amount = 0
+  if (currency === 'CFA') amount = Number(transaction.amount_cfa ?? 0)
+  else if (currency === 'USD') amount = Number(transaction.amount_usd ?? 0)
+  else amount = Number(transaction.amount_eur ?? transaction.amount ?? 0)
 
     if (categoryMap.has(label)) {
       categoryMap.set(label, categoryMap.get(label) + amount)

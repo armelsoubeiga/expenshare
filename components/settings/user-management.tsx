@@ -26,8 +26,8 @@ export function UserManagement({ isOpen, onClose }: UserManagementProps) {
         setError(null)
         const list = await db.users.toArray()
         setUsers(list)
-        const aId = await db.getAdminUserId()
-        setAdminId(aId)
+  const aId = await db.getAdminUserId()
+  setAdminId(aId ? Number(aId) : null)
         const storedUser = localStorage.getItem("expenshare_current_user") || localStorage.getItem("expenshare_user")
         if (storedUser) setCurrentUserId(JSON.parse(storedUser).id)
       } catch (e: any) {
@@ -52,7 +52,7 @@ export function UserManagement({ isOpen, onClose }: UserManagementProps) {
     setLoading(true)
     setError(null)
     try {
-      await db.deleteUser(userId)
+  await db.deleteUser(String(userId))
       await refresh()
     } catch (e: any) {
       setError(e?.message || "Erreur lors de la suppression")

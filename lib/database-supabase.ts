@@ -19,6 +19,45 @@ class SupabaseDatabase {
     }
   }
 
+    // Créer une catégorie (helper utilisé par le formulaire)
+    async createCategory(projectId: number, name: string, parentId?: number) {
+      try {
+        // Déterminer le niveau (1 si sans parent, sinon parent.level + 1)
+        let level = 1
+        let parent_id: number | null = null
+        if (parentId && Number(parentId) > 0) {
+          parent_id = Number(parentId)
+          const { data: parent, error: perr } = await supabase
+            .from('categories')
+            .select('id, level, project_id')
+            .eq('id', parent_id)
+            .maybeSingle()
+          if (perr) throw new Error(perr.message)
+          if (!parent) throw new Error('Catégorie parente introuvable')
+          if (Number(parent.project_id) !== Number(projectId)) throw new Error('Parent hors projet')
+          level = (Number(parent.level) || 1) + 1
+          if (level > 3) throw new Error('Maximum 3 niveaux de catégories autorisés')
+        }
+
+        const payload: any = {
+          project_id: Number(projectId),
+          name,
+          parent_id,
+          level,
+          created_at: new Date().toISOString(),
+        }
+        const { data, error } = await supabase
+          .from('categories')
+          .insert(payload)
+          .select('id')
+          .single()
+        if (error) throw new Error(error.message)
+        return data?.id as number
+      } catch (e: any) {
+        console.error('[ExpenseShare] createCategory failed:', e)
+        throw new Error(e?.message || 'Impossible de créer la catégorie')
+      }
+    }
   /**
    * Retourne la liste des project_ids accessibles pour un utilisateur donné
    */
@@ -302,7 +341,7 @@ class SupabaseDatabase {
     return data as Category[];
   }
 
-  async getProjectCategoryHierarchy(projectId: number): Promise<any[]> {
+  async getProjectCategoryHierarchy(projectId: number, currency: 'EUR'|'CFA'|'USD' = 'EUR'): Promise<any[]> {
     try {
   const uid = this.getCurrentUserId()
   if (!uid) return []
@@ -326,14 +365,18 @@ class SupabaseDatabase {
 
       if (txErr) return []
 
-      // Totaux par (category_id, type)
-      const totals = new Map<string, number>()
-      ;(transactions || []).forEach((t: any) => {
+    // Totaux par (category_id, type) selon la devise demandée (colonnes natives)
+    const totals = new Map<string, number>()
+    ;(transactions || []).forEach((t: any) => {
         if (t.category_id) {
-          const key = `${t.category_id}_${t.type}`
-          totals.set(key, (totals.get(key) || 0) + Number(t.amount))
+      const key = `${t.category_id}_${t.type}`
+      let amt = 0
+      if (currency === 'CFA') amt = (t as any).amount_cfa != null ? Number((t as any).amount_cfa) : 0
+      else if (currency === 'USD') amt = (t as any).amount_usd != null ? Number((t as any).amount_usd) : 0
+      else amt = (t as any).amount_eur != null ? Number((t as any).amount_eur) : Number(t.amount)
+      totals.set(key, (totals.get(key) || 0) + amt)
         }
-      })
+    })
 
       // Palette de couleurs simple et stable
       const getColorForIndex = (index: number) => {
@@ -407,7 +450,7 @@ class SupabaseDatabase {
 
       // 3) Charger projets, users, catégories (meilleure tolérance aux RLS)
       const [projectsRes, usersRes, categoriesRes] = await Promise.all([
-        projIds.length ? supabase.from('projects').select('id, name, icon, color').in('id', projIds) : Promise.resolve({ data: [] as any[], error: null } as any),
+        projIds.length ? supabase.from('projects').select('id, name, icon, color, currency').in('id', projIds) : Promise.resolve({ data: [] as any[], error: null } as any),
         userIds.length ? supabase.from('users').select('id, name').in('id', userIds) : Promise.resolve({ data: [] as any[], error: null } as any),
         catIds.length ? supabase.from('categories').select('id, name, parent_id').in('id', catIds) : Promise.resolve({ data: [] as any[], error: null } as any)
       ])
@@ -439,13 +482,17 @@ class SupabaseDatabase {
           user_id: t.user_id,
           category_id: t.category_id,
           type: t.type,
-          amount: t.amount,
+          amount: (t as any).amount_eur != null ? Number((t as any).amount_eur) : Number(t.amount),
+          amount_eur: (t as any).amount_eur != null ? Number((t as any).amount_eur) : Number(t.amount),
+          amount_cfa: (t as any).amount_cfa != null ? Number((t as any).amount_cfa) : undefined,
+          amount_usd: (t as any).amount_usd != null ? Number((t as any).amount_usd) : undefined,
           title: t.title,
           description: t.description,
           created_at: t.created_at,
           project_name: proj?.name,
           project_icon: proj?.icon,
           project_color: proj?.color,
+          project_currency: proj?.currency,
           user_name: usr?.name,
           category_name: cat?.name,
           parent_category_name: parent?.name,
@@ -490,7 +537,7 @@ class SupabaseDatabase {
 
       // 3) Métadonnées (projets, users, catégories)
       const [projectsRes, usersRes, categoriesRes] = await Promise.all([
-        projIds.length ? supabase.from('projects').select('id, name, icon, color').in('id', projIds) : Promise.resolve({ data: [] as any[], error: null } as any),
+        projIds.length ? supabase.from('projects').select('id, name, icon, color, currency').in('id', projIds) : Promise.resolve({ data: [] as any[], error: null } as any),
         userIds.length ? supabase.from('users').select('id, name').in('id', userIds) : Promise.resolve({ data: [] as any[], error: null } as any),
         catIds.length ? supabase.from('categories').select('id, name, parent_id').in('id', catIds) : Promise.resolve({ data: [] as any[], error: null } as any)
       ])
@@ -522,13 +569,17 @@ class SupabaseDatabase {
           user_id: t.user_id,
           category_id: t.category_id,
           type: t.type,
-          amount: t.amount,
+          amount: (t as any).amount_eur != null ? Number((t as any).amount_eur) : Number(t.amount),
+          amount_eur: (t as any).amount_eur != null ? Number((t as any).amount_eur) : Number(t.amount),
+          amount_cfa: (t as any).amount_cfa != null ? Number((t as any).amount_cfa) : undefined,
+          amount_usd: (t as any).amount_usd != null ? Number((t as any).amount_usd) : undefined,
           title: t.title,
           description: t.description,
           created_at: t.created_at,
           project_name: proj?.name,
           project_icon: proj?.icon,
           project_color: proj?.color,
+          project_currency: proj?.currency,
           user_name: usr?.name,
           category_name: cat?.name,
           parent_category_name: parent?.name,
@@ -683,36 +734,57 @@ class SupabaseDatabase {
     try {
       const uid = this.getCurrentUserId()
       if (!uid) {
-        return { totalExpenses: 0, totalBudgets: 0, balance: 0, transactionCount: 0, lastTransactionDate: null, projectCount: 0, expensesByMonth: [], budgetsByMonth: [] }
+        return { totalExpenses: 0, totalBudgets: 0, balance: 0, transactionCount: 0, lastTransactionDate: null, projectCount: 0, expensesByMonth: [], budgetsByMonth: [],
+          totalExpenses_eur: 0, totalBudgets_eur: 0,
+          totalExpenses_cfa: 0, totalBudgets_cfa: 0,
+          totalExpenses_usd: 0, totalBudgets_usd: 0,
+        }
       }
       const authorized = await this.getAuthorizedProjectIds(uid)
       if (!authorized.length) {
-        return { totalExpenses: 0, totalBudgets: 0, balance: 0, transactionCount: 0, lastTransactionDate: null, projectCount: 0, expensesByMonth: [], budgetsByMonth: [] }
+        return { totalExpenses: 0, totalBudgets: 0, balance: 0, transactionCount: 0, lastTransactionDate: null, projectCount: 0, expensesByMonth: [], budgetsByMonth: [],
+          totalExpenses_eur: 0, totalBudgets_eur: 0,
+          totalExpenses_cfa: 0, totalBudgets_cfa: 0,
+          totalExpenses_usd: 0, totalBudgets_usd: 0,
+        }
       }
 
       const { data: transactionsData } = await supabase
         .from('transactions')
-        .select('id, type, amount, created_at, project_id')
+        .select('*')
         .in('project_id', authorized)
       const { count: projectCount } = await supabase
         .from('projects')
         .select('*', { count: 'exact', head: true })
         .in('id', authorized as number[])
 
-      const expenses = (transactionsData || []).filter((t) => t.type === 'expense');
-      const budgets = (transactionsData || []).filter((t) => t.type === 'budget');
-      const totalExpenses = expenses.reduce((s, t) => s + Number(t.amount), 0);
-      const totalBudgets = budgets.reduce((s, t) => s + Number(t.amount), 0);
+  const expenses = (transactionsData || []).filter((t: any) => t.type === 'expense');
+  const budgets = (transactionsData || []).filter((t: any) => t.type === 'budget');
+  const getAmtEur = (t: any) => (t.amount_eur != null ? Number(t.amount_eur) : Number(t.amount))
+  const getAmtCfa = (t: any) => (t.amount_cfa != null ? Number(t.amount_cfa) : 0)
+  const getAmtUsd = (t: any) => (t.amount_usd != null ? Number(t.amount_usd) : 0)
+
+  // Totaux en EUR (compat champs historiques)
+  const totalExpenses = expenses.reduce((s: number, t: any) => s + getAmtEur(t), 0);
+  const totalBudgets = budgets.reduce((s: number, t: any) => s + getAmtEur(t), 0);
+
+  // Totaux par devise à partir des colonnes natives
+  const totalExpenses_eur = totalExpenses
+  const totalBudgets_eur = totalBudgets
+  const totalExpenses_cfa = expenses.reduce((s: number, t: any) => s + getAmtCfa(t), 0)
+  const totalBudgets_cfa = budgets.reduce((s: number, t: any) => s + getAmtCfa(t), 0)
+  const totalExpenses_usd = expenses.reduce((s: number, t: any) => s + getAmtUsd(t), 0)
+  const totalBudgets_usd = budgets.reduce((s: number, t: any) => s + getAmtUsd(t), 0)
       const balance = totalBudgets - totalExpenses;
       const lastTransactionDate = (transactionsData || [])
         .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0]?.created_at || null;
 
-      const groupByMonth = (arr: any[]) => {
+    const groupByMonth = (arr: any[]) => {
         const months: Record<string, number> = {};
-        arr.forEach((t) => {
+        arr.forEach((t: any) => {
           const d = new Date(t.created_at);
           const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-          months[k] = (months[k] || 0) + Number(t.amount);
+      months[k] = (months[k] || 0) + getAmtEur(t);
         });
         return Object.entries(months).map(([month, amount]) => ({ month, amount }));
       };
@@ -726,9 +798,19 @@ class SupabaseDatabase {
         projectCount: projectCount || 0,
         expensesByMonth: groupByMonth(expenses),
         budgetsByMonth: groupByMonth(budgets),
+        totalExpenses_eur,
+        totalBudgets_eur,
+        totalExpenses_cfa,
+        totalBudgets_cfa,
+        totalExpenses_usd,
+        totalBudgets_usd,
       };
     } catch (e) {
-      return { totalExpenses: 0, totalBudgets: 0, balance: 0, transactionCount: 0, lastTransactionDate: null, projectCount: 0, expensesByMonth: [], budgetsByMonth: [] };
+      return { totalExpenses: 0, totalBudgets: 0, balance: 0, transactionCount: 0, lastTransactionDate: null, projectCount: 0, expensesByMonth: [], budgetsByMonth: [],
+        totalExpenses_eur: 0, totalBudgets_eur: 0,
+        totalExpenses_cfa: 0, totalBudgets_cfa: 0,
+        totalExpenses_usd: 0, totalBudgets_usd: 0,
+      };
     }
   }
 
@@ -739,6 +821,41 @@ class SupabaseDatabase {
     const { data, error } = await supabase.from('transactions').insert(toInsert).select('id').single();
     if (error) throw new Error(error.message);
     return data!.id as number;
+  }
+
+  // Export/Import DB (dev tools UI)
+  downloadDatabase() {
+    // Pour Supabase, on exporte un snapshot JSON lisible
+    ;(async () => {
+      try {
+  const tables = ['users','projects','project_users','categories','transactions','notes','settings'] as const
+        const result: Record<string, any[]> = {}
+  for (const t of tables) {
+          const { data, error } = await supabase.from(t).select('*')
+          if (error) throw error
+          result[t] = (data || []) as any[]
+        }
+        const blob = new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `expenseshare-snapshot-${new Date().toISOString().replace(/[:.]/g,'-')}.json`
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+        URL.revokeObjectURL(url)
+      } catch (e) {
+        console.error('[ExpenseShare] downloadDatabase failed:', e)
+        throw e
+      }
+    })()
+  }
+
+  async uploadDatabase(file: File) {
+    // Non supporté pour Supabase (les fichiers .db SQLite ne sont pas importables directement)
+    // Option: accepter un snapshot JSON produit par downloadDatabase et tenter un import.
+    // Pour l’instant on renvoie une erreur claire.
+    throw new Error("Import de base SQLite non supporté avec Supabase. Exportez/Importez via JSON.")
   }
 
   /**
@@ -1361,20 +1478,116 @@ class SupabaseDatabase {
   transactions = {
     add: async (data: Transaction) => {
       try {
-        const payload = {
+        // Préparer payload et déterminer devise du projet + taux
+        const basePayload = {
           ...data,
           user_id: String(data.user_id),
           project_id: Number(data.project_id),
           category_id: data.category_id ? Number(data.category_id) : null,
           created_at: new Date().toISOString()
+        } as any
+
+        // Charger la devise du projet et les taux
+        let projCurrency: string = 'EUR'
+        try {
+          const proj = await this.getProjectById(Number(basePayload.project_id))
+          projCurrency = (proj?.currency as string) || 'EUR'
+        } catch {}
+
+        // Taux: eur->cfa et eur->usd depuis settings projet
+        let eurToCfa = 655.957
+        let eurToUsd = 1.0
+        try {
+          const cfa = await this.settings.get(`project:${Number(basePayload.project_id)}:eur_to_cfa`)
+          const usd = await this.settings.get(`project:${Number(basePayload.project_id)}:eur_to_usd`)
+          if (cfa?.value && !Number.isNaN(Number(cfa.value))) eurToCfa = Number(cfa.value)
+          if (usd?.value && !Number.isNaN(Number(usd.value))) eurToUsd = Number(usd.value)
+        } catch {}
+
+        const inputAmount = Number(data.amount || 0)
+        // Calculer les montants dans les 3 devises
+        let amount_eur = 0
+        let amount_cfa = 0
+        let amount_usd = 0
+        const cur = String(projCurrency).toUpperCase()
+        if (cur === 'EUR') {
+          amount_eur = inputAmount
+          amount_cfa = inputAmount * eurToCfa
+          amount_usd = inputAmount * eurToUsd
+        } else if (cur === 'XOF' || cur === 'CFA') {
+          amount_cfa = inputAmount
+          amount_eur = eurToCfa ? (inputAmount / eurToCfa) : inputAmount
+          amount_usd = amount_eur * eurToUsd
+        } else if (cur === 'USD') {
+          amount_usd = inputAmount
+          amount_eur = eurToUsd ? (inputAmount / eurToUsd) : inputAmount
+          amount_cfa = amount_eur * eurToCfa
+        } else {
+          // Par défaut considérer comme EUR
+          amount_eur = inputAmount
+          amount_cfa = inputAmount * eurToCfa
+          amount_usd = inputAmount * eurToUsd
+        }
+
+        // Arrondis pour le stockage
+        // - EUR/USD: 2 décimales
+        // - CFA/XOF: 0 décimale (pas de centimes)
+        const round2 = (v: number) => Math.round(v * 100) / 100
+        const round0 = (v: number) => Math.round(v)
+
+        if (cur === 'EUR') {
+          amount_eur = round2(amount_eur)
+          amount_usd = round2(amount_usd)
+          amount_cfa = round0(amount_cfa)
+        } else if (cur === 'XOF' || cur === 'CFA') {
+          amount_cfa = round0(amount_cfa)
+          amount_eur = round2(amount_eur)
+          amount_usd = round2(amount_usd)
+        } else if (cur === 'USD') {
+          amount_usd = round2(amount_usd)
+          amount_eur = round2(amount_eur)
+          amount_cfa = round0(amount_cfa)
+        } else {
+          amount_eur = round2(amount_eur)
+          amount_usd = round2(amount_usd)
+          amount_cfa = round0(amount_cfa)
+        }
+
+        const payload = {
+          ...basePayload,
+          // Compat: on conserve amount comme EUR pour ne pas casser l'UI existante
+          amount: amount_eur,
+          amount_eur,
+          amount_cfa,
+          amount_usd,
         }
         
-        const { data: inserted, error } = await supabase
-          .from('transactions')
-          .insert(payload)
-          .select('id')
-          .single()
-        
+        let inserted: any = null
+        let error: any = null
+        try {
+          const res = await supabase
+            .from('transactions')
+            .insert(payload)
+            .select('id')
+            .single()
+          inserted = res.data
+          error = res.error
+        } catch (e: any) {
+          error = e
+        }
+
+        // Fallback si la migration n'est pas encore appliquée (colonnes inconnues)
+        if (error && String(error.message || '').toLowerCase().includes('column') && String(error.message || '').toLowerCase().includes('does not exist')) {
+          const legacyPayload = { ...basePayload, amount: amount_eur }
+          const res2 = await supabase
+            .from('transactions')
+            .insert(legacyPayload)
+            .select('id')
+            .single()
+          inserted = res2.data
+          error = res2.error
+        }
+
         if (error) {
           console.error('[ExpenseShare] Error adding transaction:', error)
           throw new Error(error.message)

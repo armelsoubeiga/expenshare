@@ -14,13 +14,13 @@ import { Button } from "@/components/ui/button"
 // useState déjà importé en haut du fichier via "use client" (React hooks)
 
 export function HomePage() {
-  const { stats, isLoading: statsLoading, refetch: refetchStats } = useGlobalStats()
-  const { transactions, isLoading: transactionsLoading, refetch: refetchTransactions } = useRecentTransactions(10)
   const [showDetails, setShowDetails] = useState(true)
   const [preview, setPreview] = useState<{ type: 'image'|'audio'|'text'; content: string; title: string } | null>(null)
   const [displayCurrency, setDisplayCurrency] = useState<"EUR"|"CFA"|"USD">("EUR")
   const [eurToCfa, setEurToCfa] = useState<number>(655.957)
   const [eurToUsd, setEurToUsd] = useState<number>(1.0)
+  const { stats, isLoading: statsLoading, refetch: refetchStats } = useGlobalStats(displayCurrency)
+  const { transactions, isLoading: transactionsLoading, refetch: refetchTransactions } = useRecentTransactions(10)
 
   useEffect(() => {
     // Charger paramètres devise utilisateur
@@ -36,6 +36,8 @@ export function HomePage() {
         if (settingCurrency?.value) setDisplayCurrency(settingCurrency.value as any)
         if (settingCfa?.value && !Number.isNaN(Number(settingCfa.value))) setEurToCfa(Number(settingCfa.value))
         if (settingUsd?.value && !Number.isNaN(Number(settingUsd.value))) setEurToUsd(Number(settingUsd.value))
+  // Rafraîchir les stats après chargement des préférences
+  refetchStats()
       } catch {}
     }
     loadCurrency()
@@ -46,9 +48,11 @@ export function HomePage() {
         if (ev.detail.currency) setDisplayCurrency(ev.detail.currency)
         if (ev.detail.eurToCfa && !Number.isNaN(Number(ev.detail.eurToCfa))) setEurToCfa(Number(ev.detail.eurToCfa))
         if (ev.detail.eurToUsd && !Number.isNaN(Number(ev.detail.eurToUsd))) setEurToUsd(Number(ev.detail.eurToUsd))
+  // Recharger les stats à chaque changement de devise
+  refetchStats()
       } else {
         // Replis: relire depuis DB
-        loadCurrency()
+  loadCurrency()
       }
     }
     window.addEventListener('expenshare:currency-changed', onCurrencyChanged)
@@ -77,31 +81,26 @@ export function HomePage() {
     }
   }
 
-  const formatAmount = (amountEur: number) => {
-    const value = convertAmount(amountEur)
+  const formatAmount = (amount: number) => {
     const currency = displayCurrency === "CFA" ? "XOF" : displayCurrency
+    return new Intl.NumberFormat("fr-FR", { style: "currency", currency }).format(amount)
+  }
+
+  // Pour l'affichage ligne par ligne, préférer la colonne native de la devise
+  const formatTransactionAmount = (tx: any) => {
+    const currency = displayCurrency === "CFA" ? "XOF" : displayCurrency
+    let value: number | null = null
+    if (displayCurrency === 'CFA' && tx.amount_cfa != null) value = Number(tx.amount_cfa)
+    else if (displayCurrency === 'USD' && tx.amount_usd != null) value = Number(tx.amount_usd)
+    else if (displayCurrency === 'EUR' && tx.amount_eur != null) value = Number(tx.amount_eur)
+
+    // Repli: convertir depuis EUR si valeur native absente
+    if (value == null) value = convertAmount(Number(tx.amount_eur ?? tx.amount ?? 0))
     return new Intl.NumberFormat("fr-FR", { style: "currency", currency }).format(value)
   }
 
-  const formatAmountByProject = (amountEur: number, projectCurrency: string) => {
-    // Si pas de devise de projet spécifiée, utiliser la devise utilisateur globale
-    if (!projectCurrency || projectCurrency === "EUR") {
-      return formatAmount(amountEur)
-    }
-    
-    // Utiliser la devise du projet
-    const currency = projectCurrency === "XOF" ? "XOF" : projectCurrency
-    let value = amountEur
-    
-    // Convertir selon la devise du projet
-    if (projectCurrency === "XOF") {
-      value = amountEur * eurToCfa
-    } else if (projectCurrency === "USD") {
-      value = amountEur * eurToUsd
-    }
-    
-    return new Intl.NumberFormat("fr-FR", { style: "currency", currency }).format(value)
-  }
+  // Affichage des montants aligné sur le paramètre utilisateur (comme l'onglet Stats)
+  // On ignore la devise du projet pour l'affichage Home : l’utilisateur choisit sa devise globale.
 
   const getBalanceColor = (balance: number) => {
     if (balance > 0) return "text-green-600"
@@ -245,7 +244,7 @@ export function HomePage() {
               </div>
             </CardHeader>
             <CardContent>
-              <CustomPieChart data={globalChartData.map(d => ({...d, value: convertAmount(d.value)}))} title="Dépenses vs Budgets" size={180} currency={displayCurrency === 'CFA' ? 'XOF' : displayCurrency} />
+              <CustomPieChart data={globalChartData} title="Dépenses vs Budgets" size={180} currency={displayCurrency === 'CFA' ? 'XOF' : displayCurrency} />
             </CardContent>
           </Card>
 
@@ -274,7 +273,7 @@ export function HomePage() {
                     <span className="text-sm font-medium">Dépenses</span>
                     {showDetails && (
                       <Badge variant="outline" className="text-xs">
-                        {Math.round((stats.totalExpenses / (stats.totalExpenses + stats.totalBudgets)) * 100)}% du total
+                        {Math.round((stats.totalExpenses / Math.max(1, stats.totalExpenses + stats.totalBudgets)) * 100)}% du total
                       </Badge>
                     )}
                   </div>
@@ -291,7 +290,7 @@ export function HomePage() {
                 {showDetails && stats.transactionCount > 0 && (
                   <div className="flex justify-between items-center mt-1">
                     <span className="text-xs text-muted-foreground">Moyenne par transaction</span>
-                    <span className="text-xs font-medium">{formatAmount(stats.totalExpenses / stats.transactionCount)}</span>
+                    <span className="text-xs font-medium">{formatAmount((stats.totalExpenses) / Math.max(1, stats.transactionCount))}</span>
                   </div>
                 )}
               </div>
@@ -304,7 +303,7 @@ export function HomePage() {
                     <span className="text-sm font-medium">Budgets</span>
                     {showDetails && (
                       <Badge variant="outline" className="text-xs">
-                        {Math.round((stats.totalBudgets / (stats.totalExpenses + stats.totalBudgets)) * 100)}% du total
+                        {Math.round((stats.totalBudgets / Math.max(1, stats.totalExpenses + stats.totalBudgets)) * 100)}% du total
                       </Badge>
                     )}
                   </div>
@@ -314,14 +313,14 @@ export function HomePage() {
                   <div
                     className="bg-blue-500 h-2.5 rounded-full"
                     style={{
-                      width: `${Math.min(100, (stats.totalBudgets / Math.max(stats.totalBudgets, stats.totalExpenses)) * 100)}%`,
+                      width: `${Math.min(100, (stats.totalBudgets) / Math.max(stats.totalBudgets, stats.totalExpenses) * 100)}%`,
                     }}
                   ></div>
                 </div>
                 {showDetails && stats.projectCount > 0 && (
                   <div className="flex justify-between items-center mt-1">
                     <span className="text-xs text-muted-foreground">Moyenne par projet</span>
-                    <span className="text-xs font-medium">{formatAmount(stats.totalBudgets / stats.projectCount)}</span>
+                    <span className="text-xs font-medium">{formatAmount((stats.totalBudgets) / Math.max(1, stats.projectCount))}</span>
                   </div>
                 )}
               </div>
@@ -352,7 +351,7 @@ export function HomePage() {
                       <span>Taux d'utilisation du budget:</span>
                       <span className="font-medium">
                         {stats.totalBudgets > 0 
-                          ? `${Math.min(100, Math.round((stats.totalExpenses / stats.totalBudgets) * 100))}%` 
+                          ? `${Math.min(100, Math.round((stats.totalExpenses / Math.max(1, stats.totalBudgets)) * 100))}%` 
                           : "N/A"}
                       </span>
                     </div>
@@ -437,7 +436,7 @@ export function HomePage() {
                       </TableCell>
                       <TableCell className="font-medium">
                         <span className={transaction.type === "expense" ? "text-red-600" : "text-blue-600"}>
-                          {formatAmountByProject(Number(transaction.amount), transaction.project_currency)}
+                          {formatTransactionAmount(transaction)}
                         </span>
                       </TableCell>
                       <TableCell className="max-w-[120px] truncate">
