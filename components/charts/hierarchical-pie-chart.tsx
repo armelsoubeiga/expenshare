@@ -23,6 +23,15 @@ interface HierarchicalPieChartProps {
   currency?: "EUR" | "USD" | "XOF"
 }
 
+type HierarchicalTooltipPayload = {
+  payload: HierarchicalData
+}
+
+type HierarchicalTooltipProps = {
+  active?: boolean
+  payload?: HierarchicalTooltipPayload[]
+}
+
 export function HierarchicalPieChart({ data, onCategoryClick, currency = "EUR" }: HierarchicalPieChartProps) {
   // Ajoute parentName à chaque enfant lors de la navigation
   const addParentName = (children: HierarchicalData[], parentName?: string): HierarchicalData[] => {
@@ -57,11 +66,14 @@ export function HierarchicalPieChart({ data, onCategoryClick, currency = "EUR" }
   }
 
   // Affichage label catégorie/sous-catégorie dans tooltip et légende
-  const CustomTooltip = ({ active, payload }: any) => {
+  const renderTooltipContent = ({ active, payload }: HierarchicalTooltipProps) => {
     if (active && payload && payload.length) {
-      const data = payload[0].payload
+      const datum = payload[0]?.payload as HierarchicalData | undefined
+      if (!datum) {
+        return null
+      }
       // Affiche parent/nom si parentId existe
-      const label = data.parentName ? `${data.parentName}/${data.name}` : data.name
+      const label = datum.parentName ? `${datum.parentName}/${datum.name}` : datum.name
       return (
         <div className="bg-background border border-border rounded-lg p-3 shadow-lg">
           <p className="font-medium">{label}</p>
@@ -69,9 +81,9 @@ export function HierarchicalPieChart({ data, onCategoryClick, currency = "EUR" }
             {new Intl.NumberFormat("fr-FR", {
               style: "currency",
               currency,
-            }).format(data.value)}
+            }).format(datum.value)}
           </p>
-          {data.children && data.children.length > 0 && (
+          {datum.children && datum.children.length > 0 && (
             <p className="text-xs text-blue-600 mt-1">Cliquez pour explorer</p>
           )}
         </div>
@@ -144,7 +156,7 @@ export function HierarchicalPieChart({ data, onCategoryClick, currency = "EUR" }
               />
             ))}
           </Pie>
-          <Tooltip content={<CustomTooltip />} />
+          <Tooltip content={renderTooltipContent} />
         </PieChart>
       </ResponsiveContainer>
 

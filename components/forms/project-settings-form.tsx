@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { useToast } from "@/hooks/use-toast"
 import { Input } from "@/components/ui/input"
@@ -10,10 +10,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Badge } from "@/components/ui/badge"
-import { FolderPlus, Plus, X, Users, Loader2, Save, Settings, User } from "lucide-react"
+import { Plus, X, Loader2, Save, Settings, User as UserIcon } from "lucide-react"
 import { useDatabase } from "@/hooks/use-database"
-import { Category } from "@/lib/types"
+import type { Category, ProjectUser, ProjectWithId, User as UserRecord } from "@/lib/types"
+
+type UserWithId = Omit<UserRecord, "id"> & { id: string; is_admin?: boolean }
+type ProjectMember = UserWithId & { role: string }
 
 interface ProjectSettingsFormProps {
   isOpen: boolean
@@ -47,10 +49,10 @@ const PROJECT_ICONS = ["📁", "🏠", "🚗", "🛒", "🎯", "💼", "🎨", "
 export function ProjectSettingsForm({ isOpen, onClose, onSuccess, projectId, activeTab = "details" }: ProjectSettingsFormProps) {
   const { toast } = useToast()
   const { db } = useDatabase()
-  const [project, setProject] = useState<any>(null)
-  const [projectUsers, setProjectUsers] = useState<any[]>([])
+  const [project, setProject] = useState<ProjectWithId | null>(null)
+  const [projectUsers, setProjectUsers] = useState<ProjectMember[]>([])
   const [categories, setCategories] = useState<Category[]>([])
-  const [allUsers, setAllUsers] = useState<any[]>([])
+  const [allUsers, setAllUsers] = useState<UserWithId[]>([])
   const [currentTab, setCurrentTab] = useState(activeTab)
   
   const [formData, setFormData] = useState({
@@ -75,78 +77,112 @@ export function ProjectSettingsForm({ isOpen, onClose, onSuccess, projectId, act
   const [error, setError] = useState("")
   const [isLoading, setIsLoading] = useState(false)
 
-  useEffect(() => {
-    if (isOpen && projectId && db) {
-      loadProjectData()
-      // Mettre à jour l'onglet actif si les props changent
-      setCurrentTab(activeTab)
+  const loadProjectData = useCallback(async () => {
+    if (!db) {
+      return
     }
-  }, [isOpen, projectId, db, activeTab])
 
-  const loadProjectData = async () => {
-    if (!db) return
-    setIsLoading(true)
-    
+  setIsLoading(true)
+  setEurToCfa("")
+  setEurToUsd("")
+
     try {
-      // Charger les infos du projet
       const projectData = await db.getProjectById(projectId)
-      if (projectData) {
-        setProject(projectData)
-        // Charger le code de devise et normaliser 'XOF' vers 'CFA'
-        const dbCurrency = (projectData.currency as string) || 'EUR'
-        const uiCurrency = dbCurrency === 'XOF' ? 'CFA' : dbCurrency
+      if (projectData && typeof projectData.id === "number") {
+        const normalizedProject: ProjectWithId = {
+          ...projectData,
+          id: Number(projectData.id),
+        }
+        setProject(normalizedProject)
+
+        const dbCurrency = (projectData.currency as string) || "EUR"
+        const uiCurrency = dbCurrency === "XOF" ? "CFA" : dbCurrency
         setFormData({
           name: projectData.name,
-          description: projectData.description || "",
+          description: projectData.description ?? "",
           icon: projectData.icon,
           color: projectData.color,
           currency: uiCurrency,
         })
+      } else {
+        setProject(null)
       }
-      
-      // Charger les catégories
-      const projectCategories = await db.categories
+
+      const projectCategoriesRaw = await db.categories
         .where("project_id")
         .equals(projectId)
         .toArray()
-        
-      setCategories(projectCategories)
-      
-      // Charger tous les utilisateurs
+
+      const normalizedCategories = Array.isArray(projectCategoriesRaw)
+        ? projectCategoriesRaw.filter((category): category is Category =>
+            category != null && typeof category.name === "string",
+          )
+        : []
+      setCategories(normalizedCategories)
+
       const users = await db.users.toArray()
-      setAllUsers(users)
-      
-      // Charger les utilisateurs du projet
-      const projectUserRecords = await db.project_users
+      const normalizedUsers = users.reduce<UserWithId[]>((acc, user) => {
+        if (user && typeof user.id === "string") {
+          const normalizedUser: UserWithId = { ...user, id: user.id }
+          acc.push(normalizedUser)
+        }
+        return acc
+      }, [])
+      setAllUsers(normalizedUsers)
+
+      const projectUserRecordsRaw = await db.project_users
         .where("project_id")
         .equals(projectId)
         .toArray()
-        
+
+      const projectUserRecords = Array.isArray(projectUserRecordsRaw)
+        ? projectUserRecordsRaw.filter((record): record is ProjectUser =>
+            record != null && typeof record.role === "string",
+          )
+        : []
+
       const projUsers = await Promise.all(
-        projectUserRecords.map(async (pu: any) => {
+        projectUserRecords.map(async (pu) => {
           const user = await db.users.get(pu.user_id)
-          return user ? { ...user, role: pu.role } : null
-        })
+          if (!user || typeof user.id !== "string") {
+            return null
+          }
+
+          const member: ProjectMember = {
+            ...user,
+            id: user.id,
+            role: pu.role,
+          }
+
+          return member
+        }),
       )
-      
-      setProjectUsers(projUsers.filter(Boolean))
-      // Charger les taux de conversion projet (si définis)
+
+      setProjectUsers(projUsers.filter((member): member is ProjectMember => member !== null))
+
       try {
         const cfa = await db.settings.get(`project:${projectId}:eur_to_cfa`)
         const usd = await db.settings.get(`project:${projectId}:eur_to_usd`)
         if (cfa?.value) setEurToCfa(String(cfa.value))
         if (usd?.value) setEurToUsd(String(usd.value))
-      } catch (e) {
-        // ignorer
+      } catch {
+        // Paramètres optionnels, ignorer les erreurs
       }
-      
     } catch (error) {
       console.error("Failed to load project data:", error)
       setError("Erreur lors du chargement des données du projet")
     } finally {
       setIsLoading(false)
     }
-  }
+  }, [db, projectId])
+
+  useEffect(() => {
+    if (isOpen && projectId && db) {
+      void loadProjectData()
+      // Mettre à jour l'onglet actif si les props changent
+      setCurrentTab(activeTab)
+    }
+  }, [isOpen, projectId, db, activeTab, loadProjectData])
 
   const handleSaveProject = async () => {
     if (!db) return
@@ -262,8 +298,7 @@ export function ProjectSettingsForm({ isOpen, onClose, onSuccess, projectId, act
     
     setIsAddingUser(true)
     try {
-  // Vérifier que l'utilisateur n'est pas déjà dans le projet
-  if (projectUsers.some(user => String(user.id) === String(newUserId))) {
+      if (projectUsers.some((user) => user.id === newUserId)) {
         setError("Cet utilisateur est déjà dans le projet")
         return
       }
@@ -271,18 +306,17 @@ export function ProjectSettingsForm({ isOpen, onClose, onSuccess, projectId, act
       // Ajouter l'utilisateur au projet avec un rôle par défaut
       await db.project_users.add({
         project_id: projectId,
-        user_id: newUserId as any,
+            user_id: newUserId,
         role: "member",
-        added_at: new Date()
+            added_at: new Date().toISOString()
       })
 
-  // Recharger la liste depuis la DB pour garantir cohérence (RLS etc.)
       await loadProjectData()
       setNewUserId(null)
       
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Failed to add user to project:", error)
-      const msg = (error && error.message) ? String(error.message) : "Erreur lors de l'ajout de l'utilisateur au projet"
+      const msg = error instanceof Error ? error.message : "Erreur lors de l'ajout de l'utilisateur au projet"
       setError(msg)
       // Avertissements spécifiques
       if (msg.includes('Seul le propriétaire du projet') || msg.includes("L'administrateur doit faire partie du projet")) {
@@ -307,12 +341,11 @@ export function ProjectSettingsForm({ isOpen, onClose, onSuccess, projectId, act
       // Supprimer l'utilisateur du projet
       await db.project_users.remove(projectId, userId)
 
-  // Recharger la liste depuis la DB
-  await loadProjectData()
+          await loadProjectData()
       
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Failed to remove user from project:", error)
-      const msg = (error && error.message) ? String(error.message) : "Erreur lors de la suppression de l'utilisateur du projet"
+      const msg = error instanceof Error ? error.message : "Erreur lors de la suppression de l'utilisateur du projet"
       setError(msg)
       // Avertissements spécifiques
       if (msg.includes('Impossible de retirer le propriétaire')) {
@@ -564,10 +597,11 @@ export function ProjectSettingsForm({ isOpen, onClose, onSuccess, projectId, act
                   <Label>Ajouter un utilisateur au projet</Label>
                   <div className="grid grid-cols-3 gap-2">
                     <Select
+                      value={newUserId ?? ""}
                       onValueChange={(value) => {
-                        const selectedUser = allUsers.find((user) => user.id.toString() === value);
-                        if (selectedUser && !projectUsers.some((pu) => String(pu.id) === value)) {
-                          setNewUserId(value);
+                        const selectedUser = allUsers.find((user) => user.id === value)
+                        if (selectedUser && !projectUsers.some((pu) => pu.id === value)) {
+                          setNewUserId(value)
                         }
                       }}
                     >
@@ -578,7 +612,7 @@ export function ProjectSettingsForm({ isOpen, onClose, onSuccess, projectId, act
                         {allUsers
                           .filter((user) => !projectUsers.some((pu) => pu.id === user.id))
                           .map((user) => (
-                            <SelectItem key={user.id} value={user.id.toString()}>
+                            <SelectItem key={user.id} value={user.id}>
                               {user.name}
                             </SelectItem>
                           ))}
@@ -613,7 +647,7 @@ export function ProjectSettingsForm({ isOpen, onClose, onSuccess, projectId, act
                         <div key={user.id} className="flex justify-between items-center p-3">
                           <div className="flex items-center gap-3">
                             <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
-                              <User className="h-4 w-4" />
+                              <UserIcon className="h-4 w-4" />
                             </div>
                             <div>
                               <p className="font-medium">{user.name}</p>

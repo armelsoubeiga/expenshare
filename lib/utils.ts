@@ -1,5 +1,6 @@
 import { clsx, type ClassValue } from "clsx"
 import { twMerge } from "tailwind-merge"
+import { SUPPORTED_CURRENCIES, type CurrencyCode } from "./types"
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -163,4 +164,22 @@ export function safeLocalStorage() {
       }
     },
   }
+}
+
+export const CURRENCY_LABELS: Record<CurrencyCode, string> = {
+  EUR: "Euro (EUR)",
+  CFA: "CFA",
+  USD: "Dollar (USD)",
+}
+
+export const isSupportedCurrency = (value: unknown): value is CurrencyCode =>
+  typeof value === "string" && SUPPORTED_CURRENCIES.includes(value as CurrencyCode)
+
+export const normalizeCurrencyCode = (value: unknown): CurrencyCode | null => {
+  if (typeof value !== "string") {
+    return null
+  }
+
+  const normalized = value === "XOF" ? "CFA" : value
+  return isSupportedCurrency(normalized) ? normalized : null
 }

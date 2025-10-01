@@ -31,3 +31,4 @@ README-SQLITE.md
 TESTS.md
 validate-migration.sh
 MIGRATION.md
+enable-rls.sql

@@ -7,52 +7,100 @@ import { Badge } from "@/components/ui/badge"
 import { Plus, FolderPlus, Settings, Pencil, X } from "lucide-react"
 import { ProjectForm } from "@/components/forms/project-form"
 import { TransactionForm } from "@/components/forms/transaction-form"
-import { CategoryForm } from "@/components/forms/category-form"
 import { ProjectSettingsForm } from "@/components/forms/project-settings-form"
 import { useUserProjects, useDatabase } from "@/hooks/use-database"
+import { SUPPORTED_CURRENCIES, type Category, type CurrencyCode, type Transaction } from "@/lib/types"
+
+type LoadedTransaction = Transaction & { id: number }
+type LoadedCategory = Category & { id: number }
+
+const isLoadedTransaction = (value: unknown): value is LoadedTransaction => {
+  if (typeof value !== "object" || value === null) {
+    return false
+  }
+  const record = value as Record<string, unknown>
+  const type = record.type
+  const amount = record.amount
+  return (
+    typeof record.id === "number" &&
+    (type === "expense" || type === "budget") &&
+    typeof amount === "number"
+  )
+}
+
+const isLoadedCategory = (value: unknown): value is LoadedCategory => {
+  if (typeof value !== "object" || value === null) {
+    return false
+  }
+  const record = value as Record<string, unknown>
+  return typeof record.id === "number" && typeof record.name === "string"
+}
+
+const isCurrencyCode = (value: string): value is CurrencyCode =>
+  (SUPPORTED_CURRENCIES as readonly string[]).includes(value)
+
+const normalizeDisplayCurrency = (currency?: string | null): CurrencyCode => {
+  if (!currency) {
+    return "EUR"
+  }
+  const upper = currency.toUpperCase()
+  if (upper === "XOF") {
+    return "CFA"
+  }
+  return isCurrencyCode(upper) ? upper : "EUR"
+}
+
+const EDIT_PAGE_SIZE = 5
 
 export function InputPage() {
   const [showProjectForm, setShowProjectForm] = useState(false)
   const [showTransactionForm, setShowTransactionForm] = useState(false)
-  const [showCategoryForm, setShowCategoryForm] = useState(false)
   const [showProjectSettings, setShowProjectSettings] = useState(false)
-  const [selectedProjectForCategories, setSelectedProjectForCategories] = useState<number | null>(null)
   const [selectedProjectForSettings, setSelectedProjectForSettings] = useState<number | null>(null)
-  const { db, isReady } = useDatabase()
+  const { db } = useDatabase()
   // États pour l’éditeur des transactions (devise projet)
-  const [editDisplayCurrency, setEditDisplayCurrency] = useState<"EUR"|"CFA"|"USD">("EUR")
+  const [editDisplayCurrency, setEditDisplayCurrency] = useState<CurrencyCode>("EUR")
   const [editEurToCfa, setEditEurToCfa] = useState<number>(655.957)
   const [editEurToUsd, setEditEurToUsd] = useState<number>(1.0)
   const [editingProjectId, setEditingProjectId] = useState<number | null>(null)
   const [editPage, setEditPage] = useState(1)
-  const [editPageSize] = useState(5)
   const [editTotal, setEditTotal] = useState(0)
-  const [editTransactions, setEditTransactions] = useState<any[]>([])
+  const [editTransactions, setEditTransactions] = useState<LoadedTransaction[]>([])
   const [isLoadingEdits, setIsLoadingEdits] = useState(false)
-  const [userId, setUserId] = useState<number | null>(null)
+  const [userId, setUserId] = useState<string | number | null>(null)
   const [editTab, setEditTab] = useState<'transactions' | 'categories'>('transactions')
-  const [editCategories, setEditCategories] = useState<any[]>([])
+  const [editCategories, setEditCategories] = useState<LoadedCategory[]>([])
   const [editingProjectName, setEditingProjectName] = useState<string>("")
+
+  const { projects, isLoading, refetch } = useUserProjects(userId)
 
   useEffect(() => {
     const storedUser = localStorage.getItem("expenshare_user")
     if (storedUser) {
-      const userData = JSON.parse(storedUser)
-      setUserId(userData.id)
+      try {
+        const parsed: unknown = JSON.parse(storedUser)
+        if (
+          typeof parsed === "object" &&
+          parsed !== null &&
+          (typeof (parsed as { id?: unknown }).id === "string" || typeof (parsed as { id?: unknown }).id === "number")
+        ) {
+          setUserId((parsed as { id: string | number }).id)
+        }
+      } catch (error) {
+        console.error("[InputPage] Failed to parse stored user:", error)
+      }
     }
-    
+
     // Écouter les mises à jour de projets
     const onProjectUpdated = () => {
-      refetch()
+      void refetch()
     }
     window.addEventListener('expenshare:project-updated', onProjectUpdated)
-    
+
     return () => {
       window.removeEventListener('expenshare:project-updated', onProjectUpdated)
     }
-  }, [])
-
-  const { projects, isLoading, refetch } = useUserProjects(userId || 0)
+  }, [refetch])
 
   const handleProjectSuccess = () => {
     refetch()
@@ -62,39 +110,38 @@ export function InputPage() {
     // Refresh data if needed
   }
 
-  const handleCategorySuccess = () => {
-    // Géré par handleProjectSettingsSuccess
-    refetch()
-  }
-
   const handleProjectSettingsSuccess = () => {
     refetch()
   }
 
   const openEditTransactions = async (projectId: number) => {
     setEditingProjectId(projectId)
-  // Déterminer le nom du projet pour un titre plus parlant
-  const p = projects.find((pp: any) => Number(pp.id) === Number(projectId))
-  setEditingProjectName(p?.name || `Projet #${projectId}`)
+    // Déterminer le nom du projet pour un titre plus parlant
+    const project = projects.find((candidate) => candidate.id === projectId)
+    setEditingProjectName(project?.name ?? `Projet #${projectId}`)
     setEditPage(1)
-  setEditTab('transactions')
-  await loadEditCurrency(projectId)
+    setEditTab('transactions')
+    await loadEditCurrency(projectId)
     await loadEditPage(projectId, 1)
-  await loadEditCategories(projectId)
+    await loadEditCategories(projectId)
   }
 
   const loadEditPage = async (projectId: number, page: number) => {
     if (!db) return
     setIsLoadingEdits(true)
     try {
-      const all = await db.getProjectTransactions(projectId)
-      const onlyMine = (all || []).filter((t: any) => String(t.user_id) === String(userId))
-      setEditTotal(onlyMine.length)
-      const start = (page - 1) * editPageSize
-      const end = start + editPageSize
-      setEditTransactions(onlyMine.slice(start, end))
-    } catch (e) {
-      // ignore
+      const result = await db.getProjectTransactions(projectId)
+      const allTransactions = Array.isArray(result) ? result.filter(isLoadedTransaction) : []
+      const normalizedUserId = userId == null ? null : String(userId)
+      const scopedTransactions = normalizedUserId
+        ? allTransactions.filter((transaction) => String(transaction.user_id) === normalizedUserId)
+        : []
+      setEditTotal(scopedTransactions.length)
+      const start = (page - 1) * EDIT_PAGE_SIZE
+      const end = start + EDIT_PAGE_SIZE
+      setEditTransactions(scopedTransactions.slice(start, end))
+    } catch (error) {
+      console.error("[InputPage] Failed to load project transactions:", error)
     } finally {
       setIsLoadingEdits(false)
     }
@@ -116,8 +163,11 @@ export function InputPage() {
     if (!db) return
     try {
       const cats = await db.getProjectCategories(projectId)
-      setEditCategories(cats || [])
-    } catch {}
+      const loaded = Array.isArray(cats) ? cats.filter(isLoadedCategory) : []
+      setEditCategories(loaded)
+    } catch (error) {
+      console.error("[InputPage] Failed to load project categories:", error)
+    }
   }
 
   const deleteCategory = async (catId: number) => {
@@ -136,12 +186,7 @@ export function InputPage() {
     try {
       if (!db) return
       const proj = await db.getProjectById(projectId)
-      if (proj?.currency) {
-        const c = String(proj.currency)
-        setEditDisplayCurrency((c === 'XOF' ? 'CFA' : c) as any)
-      } else {
-        setEditDisplayCurrency('EUR')
-      }
+      setEditDisplayCurrency(normalizeDisplayCurrency(proj?.currency))
       const cfa = await db.settings.get(`project:${projectId}:eur_to_cfa`)
       const usd = await db.settings.get(`project:${projectId}:eur_to_usd`)
       if (cfa?.value && !Number.isNaN(Number(cfa.value))) setEditEurToCfa(Number(cfa.value))
@@ -167,13 +212,6 @@ export function InputPage() {
     return new Intl.NumberFormat('fr-FR', { style: 'currency', currency }).format(value)
   }
 
-  const openCategoryForm = (projectId: number) => {
-    // Ouvrir directement les paramètres du projet avec l'onglet catégories activé
-    setSelectedProjectForCategories(projectId)
-    setSelectedProjectForSettings(projectId)
-    setShowProjectSettings(true)
-  }
-  
   const openProjectSettings = (projectId: number) => {
     setSelectedProjectForSettings(projectId)
     setShowProjectSettings(true)
@@ -213,7 +251,7 @@ export function InputPage() {
           <CardContent>
             {projects.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-4">
-                Créez d'abord un projet pour pouvoir saisir des dépenses
+                Créez d&apos;abord un projet pour pouvoir saisir des dépenses
               </p>
             ) : (
               <Button className="w-full" onClick={() => setShowTransactionForm(true)}>
@@ -305,7 +343,7 @@ export function InputPage() {
           }}
           onSuccess={handleProjectSettingsSuccess}
           projectId={selectedProjectForSettings}
-          activeTab={selectedProjectForCategories ? "categories" : "general"}
+          activeTab="general"
         />
       )}
 
@@ -365,12 +403,12 @@ export function InputPage() {
                       </ul>
                     )}
                     {/* Pagination */}
-                    {editTotal > editPageSize && (
+                    {editTotal > EDIT_PAGE_SIZE && (
                       <div className="flex items-center justify-between pt-2">
-                        <span className="text-xs text-muted-foreground">Page {editPage} / {Math.max(1, Math.ceil(editTotal / editPageSize))}</span>
+                        <span className="text-xs text-muted-foreground">Page {editPage} / {Math.max(1, Math.ceil(editTotal / EDIT_PAGE_SIZE))}</span>
                         <div className="flex gap-2">
                           <Button variant="outline" size="sm" disabled={editPage <= 1} onClick={() => { const p = editPage - 1; setEditPage(p); loadEditPage(editingProjectId!, p); }}>Précédent</Button>
-                          <Button variant="outline" size="sm" disabled={editPage >= Math.ceil(editTotal / editPageSize)} onClick={() => { const p = editPage + 1; setEditPage(p); loadEditPage(editingProjectId!, p); }}>Suivant</Button>
+                          <Button variant="outline" size="sm" disabled={editPage >= Math.ceil(editTotal / EDIT_PAGE_SIZE)} onClick={() => { const p = editPage + 1; setEditPage(p); loadEditPage(editingProjectId!, p); }}>Suivant</Button>
                         </div>
                       </div>
                     )}

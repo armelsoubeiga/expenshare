@@ -52,6 +52,15 @@ export interface Transaction {
   project_color?: string
   user_name?: string
   category_name?: string
+  parent_category_name?: string
+  project_currency?: string
+  amount_eur?: number
+  amount_cfa?: number
+  amount_usd?: number
+  has_text?: boolean
+  has_document?: boolean
+  has_image?: boolean
+  has_audio?: boolean
 }
 
 export interface Note {
@@ -68,3 +77,9 @@ export interface Setting {
   value: string
   updated_at?: Date | string
 }
+
+export const SUPPORTED_CURRENCIES = ["EUR", "CFA", "USD"] as const
+
+export type CurrencyCode = (typeof SUPPORTED_CURRENCIES)[number]
+
+export type ProjectWithId = Project & { id: number }

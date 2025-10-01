@@ -22,6 +22,7 @@ export function DatabaseControls({ className }: DatabaseControlsProps) {
         description: "Le fichier expenseshare.db a été téléchargé avec succès.",
       })
     } catch (error) {
+      console.error("[DatabaseControls] Failed to download database:", error)
       toast({
         title: "Erreur lors du téléchargement",
         description: "Impossible de télécharger la base de données.",
@@ -47,6 +48,7 @@ export function DatabaseControls({ className }: DatabaseControlsProps) {
       // Refresh the page to reflect the changes
       window.location.reload()
     } catch (error) {
+      console.error("[DatabaseControls] Failed to upload database:", error)
       toast({
         title: "Erreur lors de l'importation",
         description: "Impossible d'importer la base de données.",

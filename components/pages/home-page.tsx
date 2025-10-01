@@ -3,12 +3,15 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
-import { TrendingUp, TrendingDown, DollarSign, FileText, Calendar, Folder, Clock, ArrowRight, Eye, EyeOff, Image, Music, File } from "lucide-react"
+import { TrendingUp, TrendingDown, DollarSign, FileText, Folder, Clock, Eye, EyeOff, Image as ImageIcon, Music, File } from "lucide-react"
 import { useEffect, useState } from "react"
+import NextImage from "next/image"
+import type { CurrencyCode, Transaction, Note } from "@/lib/types"
+import { normalizeCurrencyCode } from "@/lib/utils"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { db } from "@/lib/database"
 import { useGlobalStats, useRecentTransactions } from "@/hooks/use-database"
-import { formatCurrency, formatDate, formatDateRelative } from "@/lib/utils"
+import { formatDateRelative } from "@/lib/utils"
 import { CustomPieChart } from "@/components/charts/pie-chart"
 import { Button } from "@/components/ui/button"
 // useState déjà importé en haut du fichier via "use client" (React hooks)
@@ -16,7 +19,7 @@ import { Button } from "@/components/ui/button"
 export function HomePage() {
   const [showDetails, setShowDetails] = useState(true)
   const [preview, setPreview] = useState<{ type: 'image'|'audio'|'text'; content: string; title: string } | null>(null)
-  const [displayCurrency, setDisplayCurrency] = useState<"EUR"|"CFA"|"USD">("EUR")
+  const [displayCurrency, setDisplayCurrency] = useState<CurrencyCode>("EUR")
   const [eurToCfa, setEurToCfa] = useState<number>(655.957)
   const [eurToUsd, setEurToUsd] = useState<number>(1.0)
   const { stats, isLoading: statsLoading, refetch: refetchStats } = useGlobalStats(displayCurrency)
@@ -33,7 +36,8 @@ export function HomePage() {
         const settingCurrency = await db.settings.get(`user:${user.id}:currency`)
         const settingCfa = await db.settings.get(`user:${user.id}:eur_to_cfa`)
         const settingUsd = await db.settings.get(`user:${user.id}:eur_to_usd`)
-        if (settingCurrency?.value) setDisplayCurrency(settingCurrency.value as any)
+  const normalizedCurrency = normalizeCurrencyCode(settingCurrency?.value)
+  if (normalizedCurrency) setDisplayCurrency(normalizedCurrency)
         if (settingCfa?.value && !Number.isNaN(Number(settingCfa.value))) setEurToCfa(Number(settingCfa.value))
         if (settingUsd?.value && !Number.isNaN(Number(settingUsd.value))) setEurToUsd(Number(settingUsd.value))
   // Rafraîchir les stats après chargement des préférences
@@ -42,12 +46,21 @@ export function HomePage() {
     }
     loadCurrency()
 
+    type CurrencyChangedDetail = {
+      currency?: string
+      eurToCfa?: number | string
+      eurToUsd?: number | string
+    }
+
     const onCurrencyChanged = (e: Event) => {
-      const ev = e as CustomEvent<any>
+      const ev = e as CustomEvent<CurrencyChangedDetail>
       if (ev.detail) {
-        if (ev.detail.currency) setDisplayCurrency(ev.detail.currency)
-        if (ev.detail.eurToCfa && !Number.isNaN(Number(ev.detail.eurToCfa))) setEurToCfa(Number(ev.detail.eurToCfa))
-        if (ev.detail.eurToUsd && !Number.isNaN(Number(ev.detail.eurToUsd))) setEurToUsd(Number(ev.detail.eurToUsd))
+        if (ev.detail.currency) {
+          const normalized = normalizeCurrencyCode(ev.detail.currency)
+          if (normalized) setDisplayCurrency(normalized)
+        }
+        if (ev.detail.eurToCfa != null && !Number.isNaN(Number(ev.detail.eurToCfa))) setEurToCfa(Number(ev.detail.eurToCfa))
+        if (ev.detail.eurToUsd != null && !Number.isNaN(Number(ev.detail.eurToUsd))) setEurToUsd(Number(ev.detail.eurToUsd))
   // Recharger les stats à chaque changement de devise
   refetchStats()
       } else {
@@ -68,7 +81,7 @@ export function HomePage() {
       window.removeEventListener('expenshare:currency-changed', onCurrencyChanged)
       window.removeEventListener('expenshare:project-updated', onProjectUpdated)
     }
-  }, [])
+  }, [refetchStats, refetchTransactions])
 
   const convertAmount = (amountEur: number) => {
     switch (displayCurrency) {
@@ -87,7 +100,7 @@ export function HomePage() {
   }
 
   // Pour l'affichage ligne par ligne, préférer la colonne native de la devise
-  const formatTransactionAmount = (tx: any) => {
+  const formatTransactionAmount = (tx: Transaction) => {
     const currency = displayCurrency === "CFA" ? "XOF" : displayCurrency
     let value: number | null = null
     if (displayCurrency === 'CFA' && tx.amount_cfa != null) value = Number(tx.amount_cfa)
@@ -113,21 +126,15 @@ export function HomePage() {
   }
   
   // Fonction pour vérifier si une transaction a toutes les propriétés nécessaires
-  const isValidTransaction = (transaction: any): boolean => {
-    return (
-      transaction &&
-      transaction.id !== undefined &&
-      transaction.amount !== undefined &&
-      transaction.amount !== null &&
-      Number(transaction.amount) > 0
+  const isValidTransaction = (transaction: Transaction | null | undefined): transaction is Transaction => {
+    if (!transaction || transaction.id == null) {
+      return false
+    }
+    const amountValue = Number(
+      transaction.amount ?? transaction.amount_eur ?? transaction.amount_cfa ?? transaction.amount_usd ?? 0,
     )
+    return Number.isFinite(amountValue) && amountValue > 0
   }
-
-  const expenseChartData =
-    stats.totalExpenses > 0 ? [{ name: "Dépenses", value: stats.totalExpenses, color: "#ef4444" }] : []
-
-  const budgetChartData =
-    stats.totalBudgets > 0 ? [{ name: "Budgets", value: stats.totalBudgets, color: "#3b82f6" }] : []
 
   const globalChartData = []
   if (stats.totalExpenses > 0) {
@@ -142,7 +149,7 @@ export function HomePage() {
       <div className="flex justify-between items-start">
         <div className="space-y-2">
           <h2 className="text-2xl font-bold text-foreground">Tableau de bord</h2>
-          <p className="text-muted-foreground">Vue d'ensemble de vos projets et activités</p>
+          <p className="text-muted-foreground">Vue d&apos;ensemble de vos projets et activités</p>
         </div>
       </div>
 
@@ -240,7 +247,7 @@ export function HomePage() {
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <div>
                 <CardTitle>Répartition Globale</CardTitle>
-                <CardDescription>Vue d'ensemble des dépenses et budgets</CardDescription>
+                <CardDescription>Vue d&apos;ensemble des dépenses et budgets</CardDescription>
               </div>
             </CardHeader>
             <CardContent>
@@ -348,7 +355,7 @@ export function HomePage() {
                 <div className="mt-2 p-2 bg-muted/50 rounded-md">
                   <div className="text-xs">
                     <div className="flex justify-between mb-1">
-                      <span>Taux d'utilisation du budget:</span>
+                      <span>Taux d&rsquo;utilisation du budget:</span>
                       <span className="font-medium">
                         {stats.totalBudgets > 0 
                           ? `${Math.min(100, Math.round((stats.totalExpenses / Math.max(1, stats.totalBudgets)) * 100))}%` 
@@ -464,8 +471,9 @@ export function HomePage() {
                               className="p-1 hover:bg-muted rounded"
                               title="Voir le document"
                               onClick={async () => {
+                                if (!transaction.id) return
                                 const notes = await db.getNotesByTransaction(transaction.id)
-                                const doc = notes.find((n: any) => n.content_type === 'text' && n.file_path)
+                                const doc = notes.find((n: Note) => n.content_type === 'text' && n.file_path)
                                 if (doc) {
                                   // Ouvrir la data URL (pdf/doc) dans un nouvel onglet si possible
                                   const url = doc.content
@@ -483,12 +491,13 @@ export function HomePage() {
                               className="p-1 hover:bg-muted rounded"
                               title="Voir l'image"
                               onClick={async () => {
+                                if (!transaction.id) return
                                 const notes = await db.getNotesByTransaction(transaction.id)
-                                const img = notes.find((n: any) => n.content_type === 'image')
+                                const img = notes.find((n: Note) => n.content_type === 'image')
                                 if (img) setPreview({ type: 'image', content: img.content, title: img.file_path || 'Image' })
                               }}
                             >
-                              <Image className="h-4 w-4 text-blue-500" />
+                              <ImageIcon className="h-4 w-4 text-blue-500" />
                             </button>
                           )}
                           {transaction.has_audio && (
@@ -496,8 +505,9 @@ export function HomePage() {
                               className="p-1 hover:bg-muted rounded"
                               title="Écouter l'audio"
                               onClick={async () => {
+                                if (!transaction.id) return
                                 const notes = await db.getNotesByTransaction(transaction.id)
-                                const audio = notes.find((n: any) => n.content_type === 'audio')
+                                const audio = notes.find((n: Note) => n.content_type === 'audio')
                                 if (audio) setPreview({ type: 'audio', content: audio.content, title: audio.file_path || 'Audio' })
                               }}
                             >
@@ -534,7 +544,16 @@ export function HomePage() {
             <div className="whitespace-pre-wrap text-sm">{preview.content}</div>
           )}
           {preview?.type === 'image' && (
-            <img src={preview.content} alt={preview.title} className="max-w-full rounded border" />
+            <div className="relative w-full h-80 max-h-[65vh]">
+              <NextImage
+                src={preview.content}
+                alt={preview?.title ?? "Aperçu image"}
+                fill
+                className="object-contain rounded border"
+                sizes="(max-width: 640px) 100vw, 512px"
+                unoptimized
+              />
+            </div>
           )}
           {preview?.type === 'audio' && (
             <audio controls src={preview.content} className="w-full" />

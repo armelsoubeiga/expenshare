@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -8,15 +8,26 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Loader2, Trash2, ArrowLeft } from "lucide-react"
 import { useDatabase } from "@/hooks/use-database"
+import type { SupabaseDatabaseInstance } from "@/lib/database-supabase"
+import type { CurrencyCode, ProjectWithId, User } from "@/lib/types"
+import { SUPPORTED_CURRENCIES } from "@/lib/types"
+import { CURRENCY_LABELS, normalizeCurrencyCode } from "@/lib/utils"
 
 interface UserSettingsProps {
   isOpen: boolean
   onClose: () => void
 }
 
+type ProjectOwner = Pick<User, "id" | "name">
+
+type ProjectListItem = ProjectWithId & {
+  owner?: ProjectOwner | null
+}
+
 export function UserSettings({ isOpen, onClose }: UserSettingsProps) {
   const { db, isReady } = useDatabase()
-  const [projects, setProjects] = useState<any[]>([])
+  const database = db as SupabaseDatabaseInstance | null
+  const [projects, setProjects] = useState<ProjectListItem[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [userId, setUserId] = useState<string | null>(null)
   const [isAdmin, setIsAdmin] = useState(false)
@@ -24,152 +35,207 @@ export function UserSettings({ isOpen, onClose }: UserSettingsProps) {
   const [isDeleting, setIsDeleting] = useState<number | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null)
   // Nouveaux états: devise utilisateur et taux de conversion
-  const [currency, setCurrency] = useState<"EUR"|"CFA"|"USD">("EUR")
+  const [currency, setCurrency] = useState<CurrencyCode>("EUR")
   const [eurToCfa, setEurToCfa] = useState<string>("")
   const [eurToUsd, setEurToUsd] = useState<string>("")
   const [savingCurrency, setSavingCurrency] = useState(false)
 
-  useEffect(() => {
-    if (isOpen && isReady) {
-      loadUserData()
-    }
-  }, [isOpen, isReady])
+  const loadUserData = useCallback(async () => {
+    setIsLoading(true)
 
-  const loadUserData = async () => {
+    if (!database) {
+      setError("La base de données n'est pas disponible")
+      setIsLoading(false)
+      return
+    }
+
     try {
-      const storedUser = localStorage.getItem("expenshare_user")
-      if (!storedUser) {
+      const storedUserRaw =
+        typeof window !== "undefined" ? localStorage.getItem("expenshare_user") : null
+
+      if (!storedUserRaw) {
         setError("Utilisateur non connecté")
         setIsLoading(false)
         return
       }
 
-      if (!db) {
-        setError("La base de données n'est pas disponible")
+      let parsedUser: unknown
+      try {
+        parsedUser = JSON.parse(storedUserRaw)
+      } catch {
+        setError("Données utilisateur invalides")
         setIsLoading(false)
         return
       }
 
-      const userData = JSON.parse(storedUser)
-      setUserId(userData.id)
-
-      // Détection admin
-      let adminId = null
-      if (db.getAdminUserId) {
-        adminId = await db.getAdminUserId()
+      const parsedId = (parsedUser as { id?: unknown })?.id
+      if (typeof parsedId !== "string" && typeof parsedId !== "number") {
+        setError("Identifiant utilisateur introuvable")
+        setIsLoading(false)
+        return
       }
-      const isUserAdmin = adminId && userData.id === adminId
-      setIsAdmin(!!isUserAdmin)
 
-      let allProjects = []
-      if (isUserAdmin && db.projects && db.projects.toArray) {
-        // L'admin voit tous les projets
-        allProjects = await db.projects.toArray()
-        // Charger les noms des propriétaires
-        if (db.users && db.users.toArray) {
-          const users = await db.users.toArray()
-          const userMap = new Map((users as any[]).map((u: any) => [String(u.id), u]))
-          allProjects = (allProjects as any[]).map((p: any) => ({
-            ...p,
-            owner: userMap.get(String(p.created_by))
+      const normalizedUserId = String(parsedId)
+      setUserId(normalizedUserId)
+
+      const adminIdentifier = await database.getAdminUserId()
+      const isUserAdmin = Boolean(adminIdentifier && normalizedUserId === adminIdentifier)
+      setIsAdmin(isUserAdmin)
+
+      let fetchedProjects: ProjectListItem[] = []
+
+      if (isUserAdmin) {
+        const allProjects = await database.projects.toArray()
+        const projectsWithOwner = allProjects
+          .filter((project): project is ProjectWithId => project?.id != null)
+          .map<ProjectListItem>((project) => ({
+            ...project,
+            id: Number(project.id),
+            owner: null,
           }))
+
+        try {
+          const users = await database.users.toArray()
+          const ownerEntries = users
+            .map((user) => {
+              if (typeof user?.id !== "string" || typeof user?.name !== "string" || user.name.length === 0) {
+                return null
+              }
+
+              return [String(user.id), { id: String(user.id), name: user.name } as ProjectOwner]
+            })
+            .filter((entry): entry is [string, ProjectOwner] => entry !== null)
+
+          const ownerMap = new Map<string, ProjectOwner>(ownerEntries)
+
+          fetchedProjects = projectsWithOwner.map((project) => ({
+            ...project,
+            owner: ownerMap.get(String(project.created_by)) ?? null,
+          }))
+        } catch (ownerError) {
+          console.error("[UserSettings] Unable to load project owners:", ownerError)
+          fetchedProjects = projectsWithOwner
         }
       } else {
-        // Utilisateur normal : ses propres projets
-        allProjects = await db.projects
+        const ownProjects = await database.projects
           .where("created_by")
-          .equals(userData.id)
+          .equals(normalizedUserId)
           .toArray()
-      }
-      setProjects(allProjects)
 
-      // Charger paramètres devise utilisateur
-      try {
-        const userCurrency = await db.settings.get(`user:${userData.id}:currency`)
-        const cfaRate = await db.settings.get(`user:${userData.id}:eur_to_cfa`)
-        const usdRate = await db.settings.get(`user:${userData.id}:eur_to_usd`)
-        if (userCurrency?.value) setCurrency(userCurrency.value as any)
-        if (cfaRate?.value) setEurToCfa(String(cfaRate.value))
-        if (usdRate?.value) setEurToUsd(String(usdRate.value))
-      } catch (e) {
-        // silencieux
+        fetchedProjects = ownProjects
+          .filter((project): project is ProjectWithId => project?.id != null)
+          .map<ProjectListItem>((project) => ({
+            ...project,
+            id: Number(project.id),
+            owner: null,
+          }))
       }
-      setIsLoading(false)
+
+      setProjects(fetchedProjects)
+
+      try {
+        const userCurrency = await database.settings.get(`user:${normalizedUserId}:currency`)
+        const cfaRate = await database.settings.get(`user:${normalizedUserId}:eur_to_cfa`)
+        const usdRate = await database.settings.get(`user:${normalizedUserId}:eur_to_usd`)
+
+  const normalizedCurrency = normalizeCurrencyCode(userCurrency?.value)
+        if (normalizedCurrency) {
+          setCurrency(normalizedCurrency)
+        }
+
+        setEurToCfa(typeof cfaRate?.value === "string" ? cfaRate.value : "")
+        setEurToUsd(typeof usdRate?.value === "string" ? usdRate.value : "")
+      } catch (settingsError) {
+        console.error("[UserSettings] Failed to load currency settings:", settingsError)
+      }
+
+      setError("")
     } catch (error) {
-      console.error("Erreur lors du chargement des données utilisateur:", error)
+      console.error("[UserSettings] Erreur lors du chargement des données utilisateur:", error)
       setError("Erreur lors du chargement des projets")
+    } finally {
       setIsLoading(false)
     }
-  }
+  }, [database])
 
-  const saveCurrencySettings = async () => {
-    if (!db || !userId) return
+  useEffect(() => {
+    if (!isOpen || !isReady || !database) {
+      return
+    }
+
+    void loadUserData()
+  }, [isOpen, isReady, database, loadUserData])
+
+  const saveCurrencySettings = useCallback(async () => {
+    if (!database || !userId) {
+      setError("La base de données n'est pas disponible")
+      return
+    }
+
     setSavingCurrency(true)
     try {
-      await db.settings.put({ key: `user:${userId}:currency`, value: currency })
-      if (eurToCfa) await db.settings.put({ key: `user:${userId}:eur_to_cfa`, value: eurToCfa })
-      if (eurToUsd) await db.settings.put({ key: `user:${userId}:eur_to_usd`, value: eurToUsd })
+      await database.settings.put({ key: `user:${userId}:currency`, value: currency })
 
-      // Notifier l'application pour appliquer immédiatement
+      if (eurToCfa.trim()) {
+        await database.settings.put({ key: `user:${userId}:eur_to_cfa`, value: eurToCfa.trim() })
+      }
+
+      if (eurToUsd.trim()) {
+        await database.settings.put({ key: `user:${userId}:eur_to_usd`, value: eurToUsd.trim() })
+      }
+
       try {
         const detail = {
           currency,
-          eurToCfa,
-          eurToUsd,
+          eurToCfa: eurToCfa.trim(),
+          eurToUsd: eurToUsd.trim(),
           userId,
           updatedAt: Date.now(),
         }
-        window.dispatchEvent(new CustomEvent('expenshare:currency-changed', { detail }))
-      } catch { /* ignore */ }
-    } catch (e) {
+        window.dispatchEvent(new CustomEvent("expenshare:currency-changed", { detail }))
+      } catch {
+        // ignore dispatch errors
+      }
+    } catch (error: unknown) {
+      console.error("[UserSettings] Failed to save currency settings:", error)
       setError("Erreur lors de l'enregistrement des paramètres de devise")
     } finally {
       setSavingCurrency(false)
     }
-  }
+  }, [currency, database, eurToCfa, eurToUsd, userId])
 
-  const handleDeleteProject = async (projectId: number) => {
-    if (!db || !userId) {
-      setError("La base de données ou l'utilisateur n'est pas disponible")
-      return
+  const handleCurrencyChange = useCallback((value: string) => {
+    const normalized = normalizeCurrencyCode(value)
+    if (normalized) {
+      setCurrency(normalized)
     }
+  }, [])
 
-    setIsDeleting(projectId)
-    try {
-      // 1. Supprimer toutes les transactions associées au projet
-      await db.transactions
-        .where("project_id")
-        .equals(projectId)
-        .delete()
+  const handleDeleteProject = useCallback(
+    async (projectId: number) => {
+      if (!database || !userId) {
+        setError("La base de données ou l'utilisateur n'est pas disponible")
+        return
+      }
 
-      // 2. Supprimer toutes les catégories associées au projet
-      await db.categories
-        .where("project_id")
-        .equals(projectId)
-        .delete()
+      setIsDeleting(projectId)
+      try {
+        await database.transactions.where("project_id").equals(projectId).delete()
+        await database.categories.where("project_id").equals(projectId).delete()
+        await database.project_users.where("project_id").equals(projectId).delete()
+        await database.projects.where("id").equals(projectId).delete()
 
-      // 3. Supprimer toutes les associations d'utilisateurs au projet
-      await db.project_users
-        .where("project_id")
-        .equals(projectId)
-        .delete()
-
-      // 4. Supprimer le projet lui-même
-      await db.projects
-        .where("id")
-        .equals(projectId)
-        .delete()
-
-      // Actualiser la liste des projets
-      setProjects(projects.filter(project => project.id !== projectId))
-      setConfirmDelete(null)
-    } catch (error) {
-      console.error("Erreur lors de la suppression du projet:", error)
-      setError("Erreur lors de la suppression du projet")
-    } finally {
-      setIsDeleting(null)
-    }
-  }
+        setProjects((prev) => prev.filter((project) => project.id !== projectId))
+        setConfirmDelete(null)
+      } catch (error: unknown) {
+        console.error("Erreur lors de la suppression du projet:", error)
+        setError("Erreur lors de la suppression du projet")
+      } finally {
+        setIsDeleting(null)
+      }
+    },
+    [database, userId],
+  )
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -192,7 +258,7 @@ export function UserSettings({ isOpen, onClose }: UserSettingsProps) {
         <div className="space-y-6">
           {/* Paramètres devise utilisateur */}
           <div>
-            <h3 className="text-lg font-medium">Devise d'affichage</h3>
+            <h3 className="text-lg font-medium">Devise d’affichage</h3>
             <p className="text-sm text-muted-foreground mb-3">
               Choisissez votre devise et définissez les taux de conversion (1 € = …)
             </p>
@@ -202,11 +268,13 @@ export function UserSettings({ isOpen, onClose }: UserSettingsProps) {
                 <select
                   className="mt-1 w-full border rounded-md bg-transparent px-3 py-2"
                   value={currency}
-                  onChange={(e) => setCurrency(e.target.value as any)}
+                  onChange={(event) => handleCurrencyChange(event.target.value)}
                 >
-                  <option value="EUR">Euro (EUR)</option>
-                  <option value="CFA">CFA</option>
-                  <option value="USD">Dollar (USD)</option>
+                  {SUPPORTED_CURRENCIES.map((code) => (
+                    <option key={code} value={code}>
+                      {CURRENCY_LABELS[code]}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div>
@@ -243,7 +311,7 @@ export function UserSettings({ isOpen, onClose }: UserSettingsProps) {
             <h3 className="text-lg font-medium">{isAdmin ? "Tous les projets" : "Mes projets"}</h3>
             <p className="text-sm text-muted-foreground mb-2">
               {isAdmin
-                ? "Liste de tous les projets de tous les utilisateurs. Vous pouvez supprimer n'importe quel projet."
+                ? "Liste de tous les projets de tous les utilisateurs. Vous pouvez supprimer n’importe quel projet."
                 : "Liste des projets que vous avez créés. Vous pouvez supprimer les projets dont vous êtes propriétaire."}
             </p>
 
@@ -256,8 +324,8 @@ export function UserSettings({ isOpen, onClose }: UserSettingsProps) {
                 {projects.length === 0 ? (
                   <div className="text-center p-4 border rounded-lg text-muted-foreground">
                     {isAdmin
-                      ? "Aucun projet n'a encore été créé."
-                      : "Vous n'avez pas encore créé de projets."}
+                      ? "Aucun projet n’a encore été créé."
+                      : "Vous n’avez pas encore créé de projets."}
                   </div>
                 ) : (
                   <div className="space-y-3">

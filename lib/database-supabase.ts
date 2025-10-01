@@ -805,7 +805,8 @@ class SupabaseDatabase {
         totalExpenses_usd,
         totalBudgets_usd,
       };
-    } catch (e) {
+    } catch (error) {
+      console.error('[ExpenseShare] getGlobalStats failed:', error)
       return { totalExpenses: 0, totalBudgets: 0, balance: 0, transactionCount: 0, lastTransactionDate: null, projectCount: 0, expensesByMonth: [], budgetsByMonth: [],
         totalExpenses_eur: 0, totalBudgets_eur: 0,
         totalExpenses_cfa: 0, totalBudgets_cfa: 0,
@@ -852,6 +853,7 @@ class SupabaseDatabase {
   }
 
   async uploadDatabase(file: File) {
+    void file
     // Non supporté pour Supabase (les fichiers .db SQLite ne sont pas importables directement)
     // Option: accepter un snapshot JSON produit par downloadDatabase et tenter un import.
     // Pour l’instant on renvoie une erreur claire.
@@ -938,24 +940,27 @@ class SupabaseDatabase {
       // Assurer qu'il existe un utilisateur admin par défaut
       await this.ensureAdminUser()
 
-      // Vérifier la présence des autres tables clés pour fournir des erreurs explicites
-      const checks = [
-        supabase.from('projects').select('id', { head: true, count: 'exact' }),
-        supabase.from('project_users').select('project_id', { head: true, count: 'exact' }),
-        supabase.from('categories').select('id', { head: true, count: 'exact' }),
-        supabase.from('transactions').select('id', { head: true, count: 'exact' }),
-        supabase.from('notes').select('id', { head: true, count: 'exact' }),
-        supabase.from('settings').select('key', { head: true, count: 'exact' }),
-      ]
-      const results = await Promise.allSettled(checks)
-      results.forEach((r, idx) => {
-        if (r.status === 'rejected') {
-          console.warn('[ExpenseShare] Table check failed:', idx, r.reason)
-        } else {
-          const er = (r.value as any)?.error
-          if (er) console.warn('[ExpenseShare] Table check error:', er)
-        }
-      })
+      const currentUserId = this.getCurrentUserId()
+      if (currentUserId) {
+        // Vérifier la présence des autres tables clés uniquement lorsqu'un utilisateur est authentifié localement
+        const checks = [
+          supabase.from('projects').select('id', { head: true, count: 'exact' }),
+          supabase.from('project_users').select('project_id', { head: true, count: 'exact' }),
+          supabase.from('categories').select('id', { head: true, count: 'exact' }),
+          supabase.from('transactions').select('id', { head: true, count: 'exact' }),
+          supabase.from('notes').select('id', { head: true, count: 'exact' }),
+          supabase.from('settings').select('key', { head: true, count: 'exact' }),
+        ]
+        const results = await Promise.allSettled(checks)
+        results.forEach((r, idx) => {
+          if (r.status === 'rejected') {
+            console.warn('[ExpenseShare] Table check failed:', idx, r.reason)
+          } else {
+            const er = (r.value as any)?.error
+            if (er) console.warn('[ExpenseShare] Table check error:', er)
+          }
+        })
+      }
     } catch (error: any) {
       console.error('[ExpenseShare] Failed to initialize Supabase:', error)
       throw new Error(error?.message || 'Impossible de se connecter à Supabase')
@@ -1065,6 +1070,24 @@ class SupabaseDatabase {
       } catch (error: any) {
         console.error('[ExpenseShare] users.get failed:', error)
         return null
+      }
+    },
+    updatePinHash: async (id: string | number, pinHash: string) => {
+      try {
+        const { error } = await supabase
+          .from('users')
+          .update({ pin_hash: pinHash })
+          .eq('id', String(id))
+
+        if (error) {
+          console.error('[ExpenseShare] Error updating user pin hash:', error)
+          throw new Error(error.message)
+        }
+
+        return true
+      } catch (error) {
+        console.error('[ExpenseShare] users.updatePinHash failed:', error)
+        throw error instanceof Error ? error : new Error('Unable to update user pin hash')
       }
     },
   }
@@ -1663,8 +1686,7 @@ class SupabaseDatabase {
   }
 }
 
-// Importer createClient pour le service role
-import { createClient } from '@supabase/supabase-js'
-
 // Exporter l'instance de la base de données
+export type SupabaseDatabaseInstance = SupabaseDatabase
+
 export const db = new SupabaseDatabase()

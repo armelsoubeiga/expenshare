@@ -1,18 +1,20 @@
 "use client"
 
-import { useState, useEffect, useMemo } from "react"
+import { useState, useEffect, useMemo, useCallback } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { BarChart3, TrendingUp, TrendingDown, DollarSign, FileText, Image, Music, File } from "lucide-react"
+import { BarChart3, TrendingUp, TrendingDown, DollarSign, FileText, Image as ImageIcon, Music, File } from "lucide-react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { useUserProjects, useProjectStats } from "@/hooks/use-database"
-import { formatDate } from "@/lib/utils"
+import { formatDate, normalizeCurrencyCode } from "@/lib/utils"
 import { CustomPieChart } from "@/components/charts/pie-chart"
 import { HierarchicalPieChart } from "@/components/charts/hierarchical-pie-chart"
 import { db } from "@/lib/database"
+import NextImage from "next/image"
+import type { CurrencyCode } from "@/lib/types"
 
 export function StatsPage() {
   const [selectedProjectId, setSelectedProjectId] = useState<string>("")
@@ -20,7 +22,7 @@ export function StatsPage() {
   const [categoryHierarchy, setCategoryHierarchy] = useState<any[]>([])
   const [preview, setPreview] = useState<{ type: 'image'|'audio'|'text'; content: string; title: string } | null>(null)
   // Devise projet + taux
-  const [displayCurrency, setDisplayCurrency] = useState<"EUR"|"CFA"|"USD">("EUR")
+  const [displayCurrency, setDisplayCurrency] = useState<CurrencyCode>("EUR")
   const [eurToCfa, setEurToCfa] = useState<number>(655.957)
   const [eurToUsd, setEurToUsd] = useState<number>(1.0)
 
@@ -33,7 +35,7 @@ export function StatsPage() {
     }
   }, [])
 
-  const { projects, isLoading: projectsLoading } = useUserProjects(userId || 0)
+  const { projects, isLoading: projectsLoading } = useUserProjects(userId)
   const { stats, isLoading: statsLoading } = useProjectStats(selectedProjectId ? Number.parseInt(selectedProjectId) : 0, displayCurrency === 'CFA' ? 'CFA' : displayCurrency)
 
   // Sélectionner automatiquement le premier projet si aucun n'est sélectionné
@@ -42,41 +44,46 @@ export function StatsPage() {
       setSelectedProjectId(projects[0].id.toString())
     }
   }, [projectsLoading, projects, selectedProjectId])
-
-  // Load category hierarchy when project changes
-  useEffect(() => {
-    if (selectedProjectId) {
-      loadCategoryHierarchy(Number.parseInt(selectedProjectId))
-  loadProjectCurrency(Number.parseInt(selectedProjectId))
-    }
-  }, [selectedProjectId])
-
-  const loadCategoryHierarchy = async (projectId: number) => {
-    try {
-      const cur = displayCurrency === 'CFA' ? 'CFA' : displayCurrency
-      const hierarchy = await db.getProjectCategoryHierarchy(projectId, cur as any)
-      setCategoryHierarchy(hierarchy)
-    } catch (error) {
-      console.error("Failed to load category hierarchy:", error)
-    }
-  }
+  const loadCategoryHierarchy = useCallback(
+    async (projectId: number) => {
+      try {
+        const cur: CurrencyCode = displayCurrency === 'CFA' ? 'CFA' : displayCurrency
+        const hierarchy = await db.getProjectCategoryHierarchy(projectId, cur)
+        setCategoryHierarchy(hierarchy)
+      } catch (error) {
+        console.error("Failed to load category hierarchy:", error)
+      }
+    },
+    [displayCurrency],
+  )
 
   // Charger devise + taux pour le projet
-  const loadProjectCurrency = async (projectId: number) => {
+  const loadProjectCurrency = useCallback(async (projectId: number) => {
     try {
       const proj = await db.getProjectById(projectId)
       if (proj?.currency) {
-        const c = String(proj.currency)
-        setDisplayCurrency((c === 'XOF' ? 'CFA' : c) as any)
+        const normalizedCurrency = normalizeCurrencyCode(proj.currency)
+        if (normalizedCurrency) {
+          setDisplayCurrency(normalizedCurrency)
+        }
       }
       const cfa = await db.settings.get(`project:${projectId}:eur_to_cfa`)
       const usd = await db.settings.get(`project:${projectId}:eur_to_usd`)
       if (cfa?.value && !Number.isNaN(Number(cfa.value))) setEurToCfa(Number(cfa.value))
       if (usd?.value && !Number.isNaN(Number(usd.value))) setEurToUsd(Number(usd.value))
-    } catch (e) {
-      // ignore
+    } catch (error) {
+      console.error("Failed to load project currency:", error)
     }
-  }
+  }, [])
+
+  // Load category hierarchy when project changes
+  useEffect(() => {
+    if (selectedProjectId) {
+      const projectNumericId = Number.parseInt(selectedProjectId)
+      void loadCategoryHierarchy(projectNumericId)
+      void loadProjectCurrency(projectNumericId)
+    }
+  }, [loadCategoryHierarchy, loadProjectCurrency, selectedProjectId])
 
   // Ecouter les changements depuis le formulaire de paramètres projet
   useEffect(() => {
@@ -86,8 +93,10 @@ export function StatsPage() {
       if (!selectedProjectId) return
       if (Number(ev.detail.projectId) !== Number(selectedProjectId)) return
       if (ev.detail.currency) {
-        const c = String(ev.detail.currency)
-        setDisplayCurrency((c === 'XOF' ? 'CFA' : c) as any)
+        const normalizedCurrency = normalizeCurrencyCode(ev.detail.currency)
+        if (normalizedCurrency) {
+          setDisplayCurrency(normalizedCurrency)
+        }
       }
       if (ev.detail.eurToCfa && !Number.isNaN(Number(ev.detail.eurToCfa))) setEurToCfa(Number(ev.detail.eurToCfa))
       if (ev.detail.eurToUsd && !Number.isNaN(Number(ev.detail.eurToUsd))) setEurToUsd(Number(ev.detail.eurToUsd))
@@ -99,9 +108,9 @@ export function StatsPage() {
   // Recharger la hiérarchie quand la devise change
   useEffect(() => {
     if (selectedProjectId) {
-      loadCategoryHierarchy(Number.parseInt(selectedProjectId))
+      void loadCategoryHierarchy(Number.parseInt(selectedProjectId))
     }
-  }, [displayCurrency])
+  }, [displayCurrency, loadCategoryHierarchy, selectedProjectId])
 
   const convertAmount = (amountEur: number) => {
     switch (displayCurrency) {
@@ -450,7 +459,7 @@ export function StatsPage() {
                                         if (img) setPreview({ type: 'image', content: img.content, title: img.file_path || 'Image' })
                                       }}
                                     >
-                                      <Image className="h-4 w-4 text-blue-500" />
+                                      <ImageIcon className="h-4 w-4 text-blue-500" />
                                     </button>
                                   )}
                                   {transaction.has_audio && (
@@ -488,7 +497,16 @@ export function StatsPage() {
                     <div className="whitespace-pre-wrap text-sm">{preview.content}</div>
                   )}
                   {preview?.type === 'image' && (
-                    <img src={preview.content} alt={preview.title} className="max-w-full rounded border" />
+                    <div className="relative w-full h-80 max-h-[65vh]">
+                      <NextImage
+                        src={preview.content}
+                        alt={preview?.title ?? "Aperçu image"}
+                        fill
+                        className="object-contain rounded border"
+                        sizes="(max-width: 640px) 100vw, 512px"
+                        unoptimized
+                      />
+                    </div>
                   )}
                   {preview?.type === 'audio' && (
                     <audio controls src={preview.content} className="w-full" />

@@ -8,385 +8,633 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox"
 import { useDatabase } from "@/hooks/use-database"
 import { formatDate } from "@/lib/utils"
+import type { CurrencyCode, ProjectUser, User } from "@/lib/types"
 
 // PDF
 import jsPDF from "jspdf"
 import autoTable from "jspdf-autotable"
-
-type ExportType = 'csv' | 'pdf'
 
 interface ExportDialogProps {
   isOpen: boolean
   onClose: () => void
 }
 
+type ExportProject = {
+  id: number
+  name: string
+  icon: string
+  currency: CurrencyCode
+  role?: string | null
+}
+
+type ExportProjectDetails = ExportProject & {
+  description?: string | null
+  color?: string | null
+}
+
+type ExportTransaction = {
+  id: number
+  project_id: number
+  user_id: string | number
+  category_id: number | null
+  type: "expense" | "budget"
+  amount: number
+  amount_eur?: number
+  amount_cfa?: number
+  amount_usd?: number
+  title: string
+  description?: string | null
+  created_at: string | null
+  project_name?: string | null
+  project_icon?: string | null
+  project_color?: string | null
+  project_currency?: CurrencyCode | null
+  user_name?: string | null
+  category_name?: string | null
+  parent_category_name?: string | null
+  has_text?: boolean
+  has_document?: boolean
+  has_image?: boolean
+  has_audio?: boolean
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null
+
+const isCurrencyCode = (value: unknown): value is CurrencyCode =>
+  value === "EUR" || value === "CFA" || value === "USD"
+
+const parseCurrency = (value: unknown, fallback: CurrencyCode = "EUR"): CurrencyCode =>
+  isCurrencyCode(value) ? value : fallback
+
+const toFiniteNumber = (value: unknown): number | undefined => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value
+  }
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value)
+    if (Number.isFinite(parsed)) {
+      return parsed
+    }
+  }
+  return undefined
+}
+
+const toOptionalString = (value: unknown): string | null =>
+  typeof value === "string" ? value : null
+
+const normalizeProject = (raw: unknown, fallbackCurrency: CurrencyCode): ExportProject | null => {
+  if (!isRecord(raw)) {
+    return null
+  }
+  const id = toFiniteNumber(raw.id)
+  if (id == null) {
+    return null
+  }
+  const name = typeof raw.name === "string" ? raw.name : `Projet ${id}`
+  const icon = typeof raw.icon === "string" ? raw.icon : ""
+  const currency = parseCurrency(raw.currency, fallbackCurrency)
+  const role = typeof raw.role === "string" ? raw.role : undefined
+  return { id, name, icon, currency, role }
+}
+
+const normalizeProjectList = (input: unknown, fallbackCurrency: CurrencyCode): ExportProject[] => {
+  if (!Array.isArray(input)) {
+    return []
+  }
+  return input
+    .map((item) => normalizeProject(item, fallbackCurrency))
+    .filter((project): project is ExportProject => project !== null)
+}
+
+const normalizeProjectDetails = (raw: unknown, fallbackCurrency: CurrencyCode): ExportProjectDetails | null => {
+  if (!isRecord(raw)) {
+    return null
+  }
+  const id = toFiniteNumber(raw.id)
+  if (id == null) {
+    return null
+  }
+  const name = typeof raw.name === "string" ? raw.name : `Projet ${id}`
+  const icon = typeof raw.icon === "string" ? raw.icon : ""
+  const currency = parseCurrency(raw.currency, fallbackCurrency)
+  const description = typeof raw.description === "string" ? raw.description : null
+  const color = typeof raw.color === "string" ? raw.color : null
+  return { id, name, icon, currency, description, color }
+}
+
+const toExportTransaction = (raw: unknown): ExportTransaction | null => {
+  if (!isRecord(raw)) {
+    return null
+  }
+  const id = toFiniteNumber(raw.id)
+  const projectId = toFiniteNumber(raw.project_id)
+  const userIdValue = raw.user_id
+  const type = raw.type === "expense" || raw.type === "budget" ? raw.type : null
+  const amount = toFiniteNumber(raw.amount)
+  if (id == null || projectId == null || type == null || amount == null) {
+    return null
+  }
+  if (typeof userIdValue !== "string" && typeof userIdValue !== "number") {
+    return null
+  }
+  const categoryIdNumber = toFiniteNumber(raw.category_id)
+  const createdAt =
+    typeof raw.created_at === "string"
+      ? raw.created_at
+      : raw.created_at instanceof Date
+      ? raw.created_at.toISOString()
+      : null
+
+  return {
+    id,
+    project_id: projectId,
+    user_id: userIdValue,
+    category_id: categoryIdNumber ?? null,
+    type,
+    amount,
+    amount_eur: toFiniteNumber(raw.amount_eur),
+    amount_cfa: toFiniteNumber(raw.amount_cfa),
+    amount_usd: toFiniteNumber(raw.amount_usd),
+    title: typeof raw.title === "string" ? raw.title : "",
+    description: toOptionalString(raw.description),
+    created_at: createdAt,
+    project_name: toOptionalString(raw.project_name),
+    project_icon: toOptionalString(raw.project_icon),
+    project_color: toOptionalString(raw.project_color),
+    project_currency: isCurrencyCode(raw.project_currency) ? raw.project_currency : null,
+    user_name: toOptionalString(raw.user_name),
+    category_name: toOptionalString(raw.category_name),
+    parent_category_name: toOptionalString(raw.parent_category_name),
+    has_text: raw.has_text === true,
+    has_document: raw.has_document === true,
+    has_image: raw.has_image === true,
+    has_audio: raw.has_audio === true,
+  }
+}
+
+const normalizeTransactions = (input: unknown): ExportTransaction[] => {
+  if (!Array.isArray(input)) {
+    return []
+  }
+  return input
+    .map(toExportTransaction)
+    .filter((tx): tx is ExportTransaction => tx !== null)
+}
+
+const toTimestamp = (value: string | null): number => (value ? new Date(value).getTime() : 0)
+
 export function ExportDialog({ isOpen, onClose }: ExportDialogProps) {
   const { db, isReady } = useDatabase()
-  const [projects, setProjects] = useState<any[]>([])
+  const [projects, setProjects] = useState<ExportProject[]>([])
   const [selectedProjectId, setSelectedProjectId] = useState<string>("all")
   const [exportCsv, setExportCsv] = useState(true)
   const [exportPdf, setExportPdf] = useState(true)
   const [busy, setBusy] = useState(false)
-  const [displayCurrency, setDisplayCurrency] = useState<'EUR'|'CFA'|'USD'>('EUR') // devise utilisateur (fallback)
-  const [projectCurrency, setProjectCurrency] = useState<'EUR'|'CFA'|'USD'>('EUR') // devise du projet sélectionné
+  const [displayCurrency, setDisplayCurrency] = useState<CurrencyCode>("EUR")
+  const [projectCurrency, setProjectCurrency] = useState<CurrencyCode>("EUR")
 
   useEffect(() => {
     if (!isOpen || !isReady || !db) return
-    ;(async () => {
+    void (async () => {
       try {
-        const storedUser = localStorage.getItem('expenshare_user')
-        let ps: any[] = []
-        let dc: 'EUR'|'CFA'|'USD' = 'EUR'
+        const storedUser = localStorage.getItem("expenshare_user")
+        let loadedProjects: ExportProject[] = []
+        let detectedCurrency: CurrencyCode = "EUR"
+        let userId: string | number | null = null
+
         if (storedUser) {
-          const user = JSON.parse(storedUser)
           try {
-            const cur = await db.settings.get(`user:${user.id}:currency`)
-            if (cur?.value) dc = cur.value
-          } catch {}
-          // Récup projets autorisés
-          try {
-            ps = await db.getUserProjects(String(user.id))
+            const parsed = JSON.parse(storedUser) as { id?: string | number }
+            if (typeof parsed?.id === "string" || typeof parsed?.id === "number") {
+              userId = parsed.id
+            }
           } catch {
-            // Fallback: tous
-            if (db.projects?.toArray) ps = await db.projects.toArray()
+            userId = null
           }
         }
-        setDisplayCurrency(dc)
-        setProjects(ps || [])
-        // Sélectionner un projet par défaut si disponible et aligner la devise projet
-        if ((ps || []).length > 0) {
-          const first = ps[0]
-          setSelectedProjectId(String(first.id))
-          if (first?.currency === 'EUR' || first?.currency === 'CFA' || first?.currency === 'USD') {
-            setProjectCurrency(first.currency)
-          }
-        }
-      } catch {}
-    })()
-  }, [isOpen, isReady, db])
 
-  // Met à jour la devise projet et l'état du PDF selon la sélection
-  useEffect(() => {
-    const all = selectedProjectId === 'all'
-    if (all) {
-      setExportPdf(false)
-    }
-    if (!all) {
-      const p = projects.find((x) => String(x.id) === String(selectedProjectId))
-      const c = p?.currency
-      if (c === 'EUR' || c === 'CFA' || c === 'USD') {
-        setProjectCurrency(c)
+        if (userId != null) {
+          try {
+            const setting = await db.settings.get(`user:${userId}:currency`)
+            const value = isRecord(setting) ? setting.value : null
+            if (isCurrencyCode(value)) {
+              detectedCurrency = value
+            }
+          } catch {
+            // ignore missing setting
+          }
+
+          try {
+            const rawProjects = await db.getUserProjects(userId)
+            loadedProjects = normalizeProjectList(rawProjects, detectedCurrency)
+          } catch {
+            loadedProjects = []
+          }
+        }
+
+        if (!loadedProjects.length && db.projects?.toArray) {
+          try {
+            const rawFallback = await db.projects.toArray()
+            loadedProjects = normalizeProjectList(rawFallback, detectedCurrency)
+          } catch {
+            loadedProjects = []
+          }
+        }
+
+        setDisplayCurrency(detectedCurrency)
+        setProjects(loadedProjects)
+
+        if (loadedProjects.length > 0) {
+          const firstProject = loadedProjects[0]
+          setSelectedProjectId(String(firstProject.id))
+          setProjectCurrency(firstProject.currency)
+        } else {
+          setSelectedProjectId("all")
+          setProjectCurrency(detectedCurrency)
+        }
+      } catch {
+        // silently ignore initialization errors
       }
-    }
-  }, [selectedProjectId, projects])
+    })()
+  }, [db, isOpen, isReady])
 
-  const isAll = selectedProjectId === 'all'
-  const effectiveCurrency: 'EUR'|'CFA'|'USD' = isAll ? displayCurrency : projectCurrency
+  useEffect(() => {
+    const allProjects = selectedProjectId === "all"
+    if (allProjects) {
+      setExportPdf(false)
+      setProjectCurrency(displayCurrency)
+      return
+    }
+
+    const project = projects.find((item) => String(item.id) === selectedProjectId)
+    if (project) {
+      setProjectCurrency(project.currency)
+    }
+  }, [displayCurrency, projects, selectedProjectId])
+
+  const isAll = selectedProjectId === "all"
+  const effectiveCurrency: CurrencyCode = isAll ? displayCurrency : projectCurrency
 
   const currencySymbol = useMemo(() => {
     switch (effectiveCurrency) {
-      case 'CFA': return 'F CFA'
-      case 'USD': return '$'
-      default: return '€'
+      case "CFA":
+        return "F CFA"
+      case "USD":
+        return "$"
+      default:
+        return "€"
     }
   }, [effectiveCurrency])
 
-  // Supprime les caractères potentiellement non supportés par les polices PDF (ex: emoji) et normalise
-  const sanitizeText = (val: any): string => {
-    const s = (val == null ? '' : String(val)).normalize('NFC')
-    // Garder uniquement les caractères Latin-1 (accents FR inclus) et ponctuation basique
-    return s.replace(/[^\x00-\xFF]/g, '')
+  const sanitizeText = (val: unknown): string => {
+    const raw = val == null ? "" : String(val)
+    return raw.normalize("NFC").replace(/[^\x00-\xFF]/g, "")
   }
 
   const download = (blob: Blob, filename: string) => {
     const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = filename
-    document.body.appendChild(a)
-    a.click()
+    const anchor = document.createElement("a")
+    anchor.href = url
+    anchor.download = filename
+    document.body.appendChild(anchor)
+    anchor.click()
     setTimeout(() => {
-      a.remove()
+      anchor.remove()
       URL.revokeObjectURL(url)
     }, 100)
   }
 
-  const txCurrencyForRow = (t: any): 'EUR'|'CFA'|'USD' => {
-    if (!isAll) return effectiveCurrency
-    // Si export "tous projets", on utilise la devise du projet de la transaction si disponible
-    const c = t.project_currency
-    if (c === 'CFA' || c === 'USD' || c === 'EUR') return c
-    return 'EUR'
+  const txCurrencyForRow = (transaction: ExportTransaction): CurrencyCode => {
+    if (!isAll) {
+      return effectiveCurrency
+    }
+    return parseCurrency(transaction.project_currency, "EUR")
   }
 
-  const txNativeAmount = (t: any): number => {
-    const c = txCurrencyForRow(t)
-    if (c === 'CFA') return (t.amount_cfa ?? t.amount_eur ?? t.amount) || 0
-    if (c === 'USD') return (t.amount_usd ?? t.amount_eur ?? t.amount) || 0
-    return (t.amount_eur ?? t.amount) || 0
+  const txNativeAmount = (transaction: ExportTransaction): number => {
+    const currency = txCurrencyForRow(transaction)
+    if (currency === "CFA") {
+      return transaction.amount_cfa ?? transaction.amount_eur ?? transaction.amount
+    }
+    if (currency === "USD") {
+      return transaction.amount_usd ?? transaction.amount_eur ?? transaction.amount
+    }
+    return transaction.amount_eur ?? transaction.amount
   }
 
-  const formatAmountPdf = (n: number, cur?: 'EUR'|'CFA'|'USD'): string => {
-    const c = cur || effectiveCurrency
-    const decimals = c === 'CFA' ? 0 : 2
-    const s = n.toLocaleString('fr-FR', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })
-    // Remplacer les espaces insécables et espacements fins par des espaces normaux
-    return s.replace(/[\u202F\u00A0]/g, ' ')
+  const formatAmountPdf = (amount: number, currency?: CurrencyCode): string => {
+    const code = currency ?? effectiveCurrency
+    const decimals = code === "CFA" ? 0 : 2
+    const formatted = amount.toLocaleString("fr-FR", {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    })
+    return formatted.replace(/[\u202F\u00A0]/g, " ")
   }
 
-  const exportAsCsv = (transactions: any[]) => {
+  const exportAsCsv = (transactions: ExportTransaction[]) => {
     const headers = isAll
-      ? ['Type','Titre','Catégorie','Sous-catégorie','Montant','Devise','Projet','Utilisateur','Date']
-      : ['Type','Titre','Catégorie','Sous-catégorie',`Montant (${currencySymbol})`,'Projet','Utilisateur','Date']
-    const rows = transactions.map((t) => {
-      const c = txCurrencyForRow(t)
-      const sym = c === 'CFA' ? 'F CFA' : c === 'USD' ? '$' : '€'
-      const amount = formatAmountPdf(txNativeAmount(t), c)
-      const common = [
-        t.type === 'expense' ? 'Dépense' : 'Budget',
-        t.title || '',
-        t.parent_category_name || t.category_name || '',
-        t.parent_category_name ? (t.category_name || '') : '',
+      ? ["Type", "Titre", "Catégorie", "Sous-catégorie", "Montant", "Devise", "Projet", "Utilisateur", "Date"]
+      : ["Type", "Titre", "Catégorie", "Sous-catégorie", `Montant (${currencySymbol})`, "Projet", "Utilisateur", "Date"]
+
+    const rows = transactions.map((transaction) => {
+      const currency = txCurrencyForRow(transaction)
+      const amount = formatAmountPdf(txNativeAmount(transaction), currency)
+      const baseCells = [
+        transaction.type === "expense" ? "Dépense" : "Budget",
+        transaction.title,
+        transaction.parent_category_name ?? transaction.category_name ?? "",
+        transaction.parent_category_name ? transaction.category_name ?? "" : "",
       ]
+
       if (isAll) {
         return [
-          ...common,
+          ...baseCells,
           amount,
-          c,
-          t.project_name || '',
-          t.user_name || '',
-          t.created_at ? formatDate(t.created_at) : ''
+          currency,
+          transaction.project_name ?? "",
+          transaction.user_name ?? "",
+          transaction.created_at ? formatDate(transaction.created_at) : "",
         ]
       }
+
       return [
-        ...common,
+        ...baseCells,
         amount,
-        t.project_name || '',
-        t.user_name || '',
-        t.created_at ? formatDate(t.created_at) : ''
+        transaction.project_name ?? "",
+        transaction.user_name ?? "",
+        transaction.created_at ? formatDate(transaction.created_at) : "",
       ]
     })
+
     const csv = [headers, ...rows]
-      .map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(','))
+      .map((row) => row.map((value) => `"${String(value).replace(/"/g, '""')}"`).join(","))
       .join("\r\n")
-    download(new Blob([csv], { type: 'text/csv' }), `expenshare-transactions-${new Date().toISOString().slice(0,10)}.csv`)
+
+    download(new Blob([csv], { type: "text/csv" }), `expenshare-transactions-${new Date().toISOString().slice(0, 10)}.csv`)
   }
 
-  const exportAsPdf = (transactions: any[], options?: { project?: any, members?: string[] }) => {
-    const doc = new jsPDF({ unit: 'pt', format: 'a4' })
+  const exportAsPdf = (transactions: ExportTransaction[], options?: { project?: ExportProjectDetails; members?: string[] }) => {
+    const doc = new jsPDF({ unit: "pt", format: "a4" })
     const margin = 40
-    const line = (y: number) => doc.line(margin, y, doc.internal.pageSize.getWidth()-margin, y)
+    const drawSeparator = (y: number) => doc.line(margin, y, doc.internal.pageSize.getWidth() - margin, y)
 
-    // Police et couleurs de base
-    doc.setFont('helvetica', 'bold')
+    doc.setFont("helvetica", "bold")
     doc.setTextColor(20, 20, 20)
 
-    // Header
     doc.setFontSize(20)
     if (options?.project) {
-      const p = options.project
-      const title = `Rapport du projet: ${sanitizeText(p.name || '')}`
+      const project = options.project
+      const title = `Rapport du projet: ${sanitizeText(project.name)}`
       doc.text(title.trim(), margin, 40)
-      doc.setFont('helvetica', 'normal')
+      doc.setFont("helvetica", "normal")
       doc.setFontSize(11)
-      const members = sanitizeText((options.members || []).join(', '))
-      if (members) doc.text(`Membres: ${members}`, margin, 58)
+      const members = sanitizeText((options.members ?? []).join(", "))
+      if (members) {
+        doc.text(`Membres: ${members}`, margin, 58)
+      }
       doc.text(`Devise: ${projectCurrency}`, margin, 74)
     } else {
-      doc.text('Rapport des transactions', margin, 40)
-      doc.setFont('helvetica', 'normal')
+      doc.text("Rapport des transactions", margin, 40)
+      doc.setFont("helvetica", "normal")
       doc.setFontSize(11)
-      doc.text(`Devise: ${isAll ? 'Multiple' : effectiveCurrency}`, margin, 58)
+      doc.text(`Devise: ${isAll ? "Multiple" : effectiveCurrency}`, margin, 58)
     }
-    doc.text(`Date: ${new Date().toLocaleString('fr-FR')}`, margin, 90)
-    line(102)
+    doc.text(`Date: ${new Date().toLocaleString("fr-FR")}`, margin, 90)
+    drawSeparator(102)
 
-    // Cartes (totaux)
-    const totals = transactions.reduce((acc, t) => {
-      if (t.type === 'expense') acc.exp += txNativeAmount(t)
-      else acc.bud += txNativeAmount(t)
-      return acc
-    }, { exp: 0, bud: 0 })
+    const totals = transactions.reduce(
+      (acc, transaction) => {
+        if (transaction.type === "expense") {
+          acc.exp += txNativeAmount(transaction)
+        } else {
+          acc.bud += txNativeAmount(transaction)
+        }
+        return acc
+      },
+      { exp: 0, bud: 0 },
+    )
     const balance = totals.bud - totals.exp
 
-    // Cartes alignées (style site)
-  const pageW = doc.internal.pageSize.getWidth()
+    const pageWidth = doc.internal.pageSize.getWidth()
     const gap = 12
     const cardsY = 115
-    const cardH = 68
-    const cardW = (pageW - margin * 2 - gap * 2) / 3
-    const roundedRect = (x: number, y: number, w: number, h: number, r = 8, color: [number,number,number]) => {
+    const cardHeight = 68
+    const cardWidth = (pageWidth - margin * 2 - gap * 2) / 3
+    const roundedRect = (x: number, y: number, width: number, height: number, radius: number, color: [number, number, number]) => {
       doc.setFillColor(color[0], color[1], color[2])
-      doc.roundedRect(x, y, w, h, r, r, 'F')
+      doc.roundedRect(x, y, width, height, radius, radius, "F")
     }
-    // Fond clair des cartes
-    const redBg: [number,number,number] = [255, 235, 238]
-    const blueBg: [number,number,number] = [232, 240, 254]
-    const greenBg: [number,number,number] = [232, 245, 233]
-    const dangerBg: [number,number,number] = [255, 235, 238]
 
-    // Dessiner cartes
-    roundedRect(margin, cardsY, cardW, cardH, 8, redBg)
-    roundedRect(margin + cardW + gap, cardsY, cardW, cardH, 8, blueBg)
-    const balBg = balance >= 0 ? greenBg : dangerBg
-    roundedRect(margin + (cardW + gap) * 2, cardsY, cardW, cardH, 8, balBg)
+    const redBg: [number, number, number] = [255, 235, 238]
+    const blueBg: [number, number, number] = [232, 240, 254]
+    const greenBg: [number, number, number] = [232, 245, 233]
+    const dangerBg: [number, number, number] = [255, 235, 238]
 
-    // Contenus cartes
-    const cardPad = 12
-    // Dépenses
-    doc.setFont('helvetica', 'bold')
+    roundedRect(margin, cardsY, cardWidth, cardHeight, 8, redBg)
+    roundedRect(margin + cardWidth + gap, cardsY, cardWidth, cardHeight, 8, blueBg)
+    const balanceBg = balance >= 0 ? greenBg : dangerBg
+    roundedRect(margin + (cardWidth + gap) * 2, cardsY, cardWidth, cardHeight, 8, balanceBg)
+
+    const cardPadding = 12
+    doc.setFont("helvetica", "bold")
     doc.setTextColor(100, 100, 100)
     doc.setFontSize(10)
-    doc.text('Total Dépenses', margin + cardPad, cardsY + cardPad + 2)
+    doc.text("Total Dépenses", margin + cardPadding, cardsY + cardPadding + 2)
     doc.setFontSize(16)
-    doc.setTextColor(239, 68, 68) // rouge
-  doc.text(`${formatAmountPdf(totals.exp, projectCurrency)} ${currencySymbol}`, margin + cardPad, cardsY + cardPad + 26)
-    // Budgets
-    doc.setTextColor(100, 100, 100)
-    doc.setFontSize(10)
-    doc.text('Total Budgets', margin + cardW + gap + cardPad, cardsY + cardPad + 2)
-    doc.setFontSize(16)
-    doc.setTextColor(59, 130, 246) // bleu
-  doc.text(`${formatAmountPdf(totals.bud, projectCurrency)} ${currencySymbol}`, margin + cardW + gap + cardPad, cardsY + cardPad + 26)
-    // Solde
-    doc.setTextColor(100, 100, 100)
-    doc.setFontSize(10)
-    doc.text('Solde', margin + (cardW + gap) * 2 + cardPad, cardsY + cardPad + 2)
-    doc.setFontSize(16)
-    doc.setTextColor(balance >= 0 ? 16 : 239, balance >= 0 ? 185 : 68, balance >= 0 ? 129 : 68) // vert/rouge
-  doc.text(`${formatAmountPdf(balance, projectCurrency)} ${currencySymbol}`, margin + (cardW + gap) * 2 + cardPad, cardsY + cardPad + 26)
+    doc.setTextColor(239, 68, 68)
+    doc.text(`${formatAmountPdf(totals.exp, projectCurrency)} ${currencySymbol}`, margin + cardPadding, cardsY + cardPadding + 26)
 
-    // Répartition par catégorie — barres horizontales fines pour toutes les catégories
-    const byCat = new Map<string, number>()
-    for (const t of transactions) {
-      if (t.type !== 'expense') continue
-      const k = t.parent_category_name || t.category_name || 'Sans catégorie'
-      byCat.set(k, (byCat.get(k) || 0) + txNativeAmount(t))
-    }
-    let y = cardsY + cardH + 24
+    doc.setTextColor(100, 100, 100)
+    doc.setFontSize(10)
+    doc.text("Total Budgets", margin + cardWidth + gap + cardPadding, cardsY + cardPadding + 2)
+    doc.setFontSize(16)
+    doc.setTextColor(59, 130, 246)
+    doc.text(`${formatAmountPdf(totals.bud, projectCurrency)} ${currencySymbol}`, margin + cardWidth + gap + cardPadding, cardsY + cardPadding + 26)
+
+    doc.setTextColor(100, 100, 100)
+    doc.setFontSize(10)
+    doc.text("Solde", margin + (cardWidth + gap) * 2 + cardPadding, cardsY + cardPadding + 2)
+    doc.setFontSize(16)
+    doc.setTextColor(balance >= 0 ? 16 : 239, balance >= 0 ? 185 : 68, balance >= 0 ? 129 : 68)
+    doc.text(`${formatAmountPdf(balance, projectCurrency)} ${currencySymbol}`, margin + (cardWidth + gap) * 2 + cardPadding, cardsY + cardPadding + 26)
+
+    const expensesByCategory = new Map<string, number>()
+    transactions.forEach((transaction) => {
+      if (transaction.type !== "expense") {
+        return
+      }
+      const key = transaction.parent_category_name ?? transaction.category_name ?? "Sans catégorie"
+      expensesByCategory.set(key, (expensesByCategory.get(key) ?? 0) + txNativeAmount(transaction))
+    })
+
+    let chartY = cardsY + cardHeight + 24
     doc.setFontSize(12)
-    doc.setTextColor(20,20,20)
-    doc.text('Dépenses par catégorie', margin, y)
-    y += 12
-    const sorted = Array.from(byCat.entries()).sort((a,b)=>b[1]-a[1])
-    const totalVal = sorted.reduce((s, [,v]) => s+v, 0) || 1
+    doc.setTextColor(20, 20, 20)
+    doc.text("Dépenses par catégorie", margin, chartY)
+    chartY += 12
 
-    // Layout
-  const pageW2 = doc.internal.pageSize.getWidth()
-  const pageH2 = doc.internal.pageSize.getHeight()
-    const labelW = 170
-    const valueW = 110
-    const barH = 6
-    const gapY = 10
-  const barX = margin + labelW
-  const barW = pageW2 - margin - barX - valueW
-    const trackColor: [number,number,number] = [235, 238, 245]
-    const fillColor: [number,number,number] = [59, 130, 246]
-    const textMuted: [number,number,number] = [90, 90, 90]
+    const pageHeight = doc.internal.pageSize.getHeight()
+    const labelWidth = 170
+    const valueWidth = 110
+    const barHeight = 6
+    const barGap = 10
+    const barX = margin + labelWidth
+    const barWidth = pageWidth - margin - barX - valueWidth
+    const trackColor: [number, number, number] = [235, 238, 245]
+    const fillColor: [number, number, number] = [59, 130, 246]
+    const textMuted: [number, number, number] = [90, 90, 90]
 
-    const formatPercent = (p: number): string => `${(p*100).toLocaleString('fr-FR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }).replace(/[\u202F\u00A0]/g,' ')} %`
+    const sortedCategories = Array.from(expensesByCategory.entries()).sort((a, b) => b[1] - a[1])
+    const totalValue = sortedCategories.reduce((sum, [, value]) => sum + value, 0) || 1
+
+    const formatPercent = (fraction: number): string =>
+      `${(fraction * 100)
+        .toLocaleString("fr-FR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+        .replace(/[\u202F\u00A0]/g, " ")} %`
 
     doc.setFontSize(10)
-    sorted.forEach(([label, value]) => {
-      // Saut de page si nécessaire (laisser un peu d'espace avant le tableau suivant)
-  if (y + barH + gapY > pageH2 - margin - 120) {
+    sortedCategories.forEach(([label, value]) => {
+      if (chartY + barHeight + barGap > pageHeight - margin - 120) {
         doc.addPage()
-        y = margin
-        doc.setFont('helvetica','bold')
-        doc.setTextColor(20,20,20)
+        chartY = margin
+        doc.setFont("helvetica", "bold")
+        doc.setTextColor(20, 20, 20)
         doc.setFontSize(12)
-        doc.text('Dépenses par catégorie', margin, y)
-        y += 12
-        doc.setFont('helvetica','normal')
+        doc.text("Dépenses par catégorie", margin, chartY)
+        chartY += 12
+        doc.setFont("helvetica", "normal")
         doc.setFontSize(10)
       }
 
-      const pct = value / totalVal
-      const w = Math.max(1, Math.round(barW * pct))
+      const ratio = value / totalValue
+      const width = Math.max(1, Math.round(barWidth * ratio))
       const labelText = sanitizeText(label)
-      const valueText = `${formatAmountPdf(value, projectCurrency)} ${currencySymbol}  •  ${formatPercent(pct)}`
+      const valueText = `${formatAmountPdf(value, projectCurrency)} ${currencySymbol}  •  ${formatPercent(ratio)}`
 
-      // Libellé à gauche
       doc.setTextColor(textMuted[0], textMuted[1], textMuted[2])
-      doc.text(labelText, margin, y + barH)
+      doc.text(labelText, margin, chartY + barHeight)
 
-      // Rail (track)
       doc.setFillColor(trackColor[0], trackColor[1], trackColor[2])
-      doc.rect(barX, y, barW, barH, 'F')
-      // Remplissage
+      doc.rect(barX, chartY, barWidth, barHeight, "F")
       doc.setFillColor(fillColor[0], fillColor[1], fillColor[2])
-      doc.rect(barX, y, w, barH, 'F')
+      doc.rect(barX, chartY, width, barHeight, "F")
 
-      // Valeur alignée à droite
-      doc.setTextColor(20,20,20)
-      doc.text(valueText, barX + barW + valueW - 2, y + barH, { align: 'right' as any })
+      doc.setTextColor(20, 20, 20)
+      doc.text(valueText, barX + barWidth + valueWidth - 2, chartY + barHeight, { align: "right" })
 
-      y += barH + gapY
+      chartY += barHeight + barGap
     })
 
-    // Table réduite
-  const tableStartY = y + 20
+    const tableStartY = chartY + 20
     autoTable(doc, {
       startY: tableStartY,
-      head: [["Type","Titre","Montant","Utilisateur","Date"]],
-      body: transactions.slice(0, 200).map((t) => [
-  t.type === 'expense' ? 'Dépense' : 'Budget',
-  sanitizeText(t.title || ''),
-  `${formatAmountPdf(txNativeAmount(t), txCurrencyForRow(t))} ${isAll ? (txCurrencyForRow(t) === 'CFA' ? 'F CFA' : txCurrencyForRow(t) === 'USD' ? '$' : '€') : currencySymbol}`,
-  sanitizeText(t.user_name || ''),
-        t.created_at ? formatDate(t.created_at) : ''
+      head: [["Type", "Titre", "Montant", "Utilisateur", "Date"]],
+      body: transactions.slice(0, 200).map((transaction) => [
+        transaction.type === "expense" ? "Dépense" : "Budget",
+        sanitizeText(transaction.title),
+        `${formatAmountPdf(txNativeAmount(transaction), txCurrencyForRow(transaction))} ${
+          isAll
+            ? txCurrencyForRow(transaction) === "CFA"
+              ? "F CFA"
+              : txCurrencyForRow(transaction) === "USD"
+              ? "$"
+              : "€"
+            : currencySymbol
+        }`,
+        sanitizeText(transaction.user_name ?? ""),
+        transaction.created_at ? formatDate(transaction.created_at) : "",
       ]),
       styles: { fontSize: 9 },
       headStyles: { fillColor: [33, 33, 33] },
-      theme: 'striped',
+      theme: "striped",
       margin: { left: margin, right: margin },
     })
 
-    const blob = doc.output('blob')
-    download(blob as Blob, `expenshare-rapport-${new Date().toISOString().slice(0,10)}.pdf`)
+    const blob = doc.output("blob") as Blob
+    download(blob, `expenshare-rapport-${new Date().toISOString().slice(0, 10)}.pdf`)
   }
 
   const handleExport = async () => {
     if (!db) return
     setBusy(true)
     try {
-      // Transactions autorisées, complètes avec métadonnées
-      let transactions: any[] = []
-      if (selectedProjectId === 'all') {
-        // On n'a pas d'endpoint "all" direct; on concatène les transactions récentes avec un grand plafond
-        transactions = await db.getRecentTransactions(10000)
+      let rawTransactions: unknown
+      if (selectedProjectId === "all") {
+        rawTransactions = await db.getRecentTransactions(10000)
       } else {
-        transactions = await db.getProjectTransactions(Number(selectedProjectId))
+        rawTransactions = await db.getProjectTransactions(Number(selectedProjectId))
       }
-      // Filtrer par projet si besoin
-      if (selectedProjectId !== 'all') {
-        transactions = (transactions || []).filter((t: any) => Number(t.project_id) === Number(selectedProjectId))
-      }
-      // Ordonner par date desc
-      transactions.sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
 
-      if (exportCsv) exportAsCsv(transactions)
-      if (exportPdf) {
-        let project: any | undefined
-        let members: string[] | undefined
-        if (selectedProjectId !== 'all') {
-          try {
-            project = await db.getProjectById(Number(selectedProjectId))
-            // membres
-            const mem = await db.project_users.where('project_id').equals(Number(selectedProjectId)).toArray()
-            const userIds: string[] = Array.from(new Set<string>((mem || []).map((m: any) => String(m.user_id))))
-            let users: any[] = []
-            try { users = await db.users.toArray() } catch {}
-            const userMap = new Map<string, any>(users.map((u: any) => [String(u.id), u] as [string, any]))
-            members = userIds.map((uid: string) => (userMap.get(uid)?.name as string | undefined)).filter((n): n is string => typeof n === 'string' && n.length > 0)
-          } catch {}
-        }
-        exportAsPdf(transactions, { project, members })
+      let transactions = normalizeTransactions(rawTransactions)
+
+      if (!isAll) {
+        const targetId = Number(selectedProjectId)
+        transactions = transactions.filter((transaction) => transaction.project_id === targetId)
       }
+
+      transactions.sort((a, b) => toTimestamp(b.created_at) - toTimestamp(a.created_at))
+
+      if (exportCsv) {
+        exportAsCsv(transactions)
+      }
+
+      if (exportPdf) {
+        let projectDetails: ExportProjectDetails | null = null
+        let members: string[] | undefined
+
+        if (!isAll) {
+          try {
+            const rawProject = await db.getProjectById(Number(selectedProjectId))
+            projectDetails = normalizeProjectDetails(rawProject, projectCurrency)
+
+            const memberQuery = db.project_users?.where?.("project_id")
+            const memberResult = memberQuery ? await memberQuery.equals(Number(selectedProjectId)).toArray() : []
+            const memberRows: ProjectUser[] = Array.isArray(memberResult)
+              ? memberResult.filter((row): row is ProjectUser =>
+                  typeof row?.project_id === "number" &&
+                  (typeof row?.user_id === "string" || typeof row?.user_id === "number") &&
+                  typeof row?.role === "string",
+                )
+              : []
+
+            const userIds = Array.from(new Set(memberRows.map((row) => String(row.user_id))))
+
+            let userList: User[] = []
+            try {
+              const usersRaw = await db.users?.toArray?.()
+              userList = Array.isArray(usersRaw)
+                ? usersRaw.filter((user): user is User => typeof user?.id === "string" && typeof user?.name === "string")
+                : []
+            } catch {
+              userList = []
+            }
+
+            const userMap = new Map<string, User>(userList.map((user) => [String(user.id), user]))
+            const memberNames = userIds
+              .map((uid) => {
+                const name = userMap.get(uid)?.name?.trim()
+                return name && name.length > 0 ? name : null
+              })
+              .filter((name): name is string => name !== null)
+
+            members = memberNames.length > 0 ? memberNames : undefined
+          } catch {
+            projectDetails = projectDetails ?? null
+          }
+        }
+
+        exportAsPdf(transactions, {
+          project: projectDetails ?? undefined,
+          members,
+        })
+      }
+
       onClose()
-    } catch (e) {
-      console.error('Export failed', e)
-      alert("Erreur lors de l'export")
+    } catch (error) {
+      console.error("Export failed", error)
+      alert("Erreur lors de l’export")
     } finally {
       setBusy(false)
     }
@@ -398,7 +646,7 @@ export function ExportDialog({ isOpen, onClose }: ExportDialogProps) {
         <DialogHeader>
           <DialogTitle>Exporter les données</DialogTitle>
           <DialogDescription>
-            Choisissez le projet et le type d'export à générer.
+            Choisissez le projet et le type d’export à générer.
           </DialogDescription>
         </DialogHeader>
 
@@ -411,9 +659,9 @@ export function ExportDialog({ isOpen, onClose }: ExportDialogProps) {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Tous mes projets</SelectItem>
-                {projects.map((p) => (
-                  <SelectItem key={p.id} value={String(p.id)}>
-                    {p.icon} {p.name}
+                {projects.map((project) => (
+                  <SelectItem key={project.id} value={String(project.id)}>
+                    {project.icon} {project.name}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -421,30 +669,32 @@ export function ExportDialog({ isOpen, onClose }: ExportDialogProps) {
           </div>
 
           <div className="space-y-2">
-            <Label>Types d'export</Label>
+            <Label>Types d’export</Label>
             <div className="flex items-center gap-4">
               <label className="flex items-center gap-2 text-sm">
-                <Checkbox checked={exportCsv} onCheckedChange={(v) => setExportCsv(!!v)} />
+                <Checkbox checked={exportCsv} onCheckedChange={(value) => setExportCsv(!!value)} />
                 CSV
               </label>
               <label className="flex items-center gap-2 text-sm">
-                <Checkbox checked={exportPdf} disabled={selectedProjectId === 'all'} onCheckedChange={(v) => setExportPdf(!!v)} />
-                PDF{selectedProjectId === 'all' ? ' — non disponible pour tous les projets' : ''}
+                <Checkbox checked={exportPdf} disabled={selectedProjectId === "all"} onCheckedChange={(value) => setExportPdf(!!value)} />
+                PDF{selectedProjectId === "all" ? " — non disponible pour tous les projets" : ""}
               </label>
             </div>
           </div>
 
           <p className="text-xs text-muted-foreground">
-            {selectedProjectId === 'all'
+            {selectedProjectId === "all"
               ? "CSV: les montants sont dans la devise propre à chaque projet (colonne Devise incluse)."
               : `Montants exportés dans la devise du projet (${currencySymbol}).`}
           </p>
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={onClose} disabled={busy}>Annuler</Button>
+          <Button variant="outline" onClick={onClose} disabled={busy}>
+            Annuler
+          </Button>
           <Button onClick={handleExport} disabled={busy}>
-            {busy ? 'Génération…' : 'Exporter'}
+            {busy ? "Génération…" : "Exporter"}
           </Button>
         </DialogFooter>
       </DialogContent>

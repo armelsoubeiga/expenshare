@@ -1,15 +1,8 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
-import { useRouter, usePathname } from "next/navigation"
+import { usePathname } from "next/navigation"
 import { Button } from "@/components/ui/button"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Settings, LogOut, KeyRound, Download, Users, Bell } from "lucide-react"
 import { db } from "@/lib/database"
@@ -17,6 +10,7 @@ import { UserSettings } from "@/components/settings/user-settings"
 import { PinChange } from "@/components/auth/pin-change"
 import { UserManagement } from "@/components/settings/user-management"
 import { ExportDialog } from "@/components/export/export-dialog"
+import type { Transaction, ProjectUser } from "@/lib/types"
 
 interface TopHeaderProps {
   onLogout: () => void
@@ -26,7 +20,6 @@ export function TopHeader({ onLogout }: TopHeaderProps) {
   type NotifItem = { id: string; type: 'expense'|'budget'; projectName?: string; userName: string; ts: number }
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
-  const router = useRouter()
   const pathname = usePathname()
   // Fermer le menu si clic en dehors
   useEffect(() => {
@@ -98,7 +91,7 @@ export function TopHeader({ onLogout }: TopHeaderProps) {
   // lastSeen: ne pas initialiser automatiquement à "maintenant" pour que les utilisateurs voient
   // les nouvelles transactions même s'ils n'étaient pas connectés.
   // Si absent, on utilisera la date de création de l'utilisateur comme fallback (sinon 1970), sans l'écrire côté client.
-  let lastSeen = localStorage.getItem(lastSeenKey) || ''
+  const lastSeen = localStorage.getItem(lastSeenKey) || ''
 
       // Calculer les non lus depuis lastSeen (serveur) pour garantir l’exactitude multi-appareils
       // Déterminer un since effectif
@@ -128,15 +121,18 @@ export function TopHeader({ onLogout }: TopHeaderProps) {
         try {
           if (effective > 0) {
             const sinceVal = await sincePromise
-            const serverTx = await db.getTransactionsSince(sinceVal, Math.min(50, effective + 5))
+            const serverTx: Transaction[] = await db.getTransactionsSince(sinceVal, Math.min(50, effective + 5))
             if (Array.isArray(serverTx) && serverTx.length) {
-              const mapped: NotifItem[] = serverTx.map((t: any) => ({
-                id: `${t.id}_${t.created_at}`,
-                type: t.type === 'expense' ? 'expense' as const : 'budget' as const,
-                projectName: t.project_name || 'Projet',
-                userName: t.user_name || 'Utilisateur',
-                ts: new Date(t.created_at).getTime(),
-              }))
+              const mapped: NotifItem[] = serverTx.map((t) => {
+                const createdAt = t.created_at ? new Date(t.created_at).getTime() : Date.now()
+                return {
+                  id: `${t.id}_${t.created_at}`,
+                  type: t.type === 'expense' ? 'expense' : 'budget',
+                  projectName: t.project_name || 'Projet',
+                  userName: t.user_name || 'Utilisateur',
+                  ts: createdAt,
+                }
+              })
               setNotifItems(prev => {
                 // Fusionner sans doublons par id
                 const seen = new Set(prev.map(p => p.id))
@@ -155,12 +151,19 @@ export function TopHeader({ onLogout }: TopHeaderProps) {
   // Écouter les nouvelles transactions pour incrémenter le compteur
 
       // Écouter les nouvelles transactions pour incrémenter le compteur
-      const onNewTx = async (evt: any) => {
+      interface NewTransactionEventDetail {
+        projectId: number | string
+        userId: number | string
+        type: Transaction["type"]
+      }
+
+      const onNewTx = async (evt: Event) => {
         try {
-          const detail = evt?.detail || {}
+          const detail = (evt as CustomEvent<NewTransactionEventDetail>)?.detail
+          if (!detail) return
           // Vérifier si l'utilisateur courant appartient au projet concerné
-      const memberships = await db.project_users.where('user_id').equals(String(userData.id)).toArray()
-          const projectIds = new Set(memberships.map((m: any) => Number(m.project_id)))
+      const memberships: ProjectUser[] = await db.project_users.where('user_id').equals(String(userData.id)).toArray()
+          const projectIds = new Set(memberships.map((m) => Number(m.project_id)))
           if (projectIds.has(Number(detail.projectId))) {
             // Mettre à jour compteur
             setUnreadCount(prev => {
@@ -173,9 +176,10 @@ export function TopHeader({ onLogout }: TopHeaderProps) {
             try {
               const u = await db.users.get(String(detail.userId))
               const proj = await db.getProjectById(Number(detail.projectId))
-              const item = {
+              const itemType: NotifItem['type'] = detail.type === 'expense' ? 'expense' : 'budget'
+              const item: NotifItem = {
                 id: `${Date.now()}_${Math.random().toString(36).slice(2,7)}`,
-                type: (String(detail.type) === 'expense' ? 'expense' : 'budget') as 'expense'|'budget',
+                type: itemType,
                 projectName: proj?.name || 'Projet',
                 userName: u?.name || 'Utilisateur',
                 ts: Date.now(),
@@ -205,25 +209,6 @@ export function TopHeader({ onLogout }: TopHeaderProps) {
 
   const handleExportData = async () => {
     setShowExport(true)
-  }
-
-  const handleImportData = () => {
-    const input = document.createElement("input")
-    input.type = "file"
-    input.accept = ".txt"
-    input.onchange = async (e) => {
-      const file = (e.target as HTMLInputElement).files?.[0]
-      if (!file) return
-
-      try {
-        // Fonctionnalité d'import non disponible avec Supabase
-        alert("L'import de données n'est pas disponible avec la version Supabase de l'application.")
-      } catch (error) {
-        console.error("Import failed:", error)
-        alert("Erreur lors de l'import des données")
-      }
-    }
-    input.click()
   }
 
   return (

@@ -1,46 +1,57 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
+import type { SupabaseDatabaseInstance } from "@/lib/database-supabase"
+import type { CurrencyCode, ProjectWithId, Transaction } from "@/lib/types"
 // L'import dynamique ci-dessous garantit que nous récupérons bien l'instance
 // (export nommé ou par défaut) sans souci d'ordre de chargement.
 
-export function useDatabase() {
+type UseDatabaseResult = {
+  db: SupabaseDatabaseInstance | null
+  isReady: boolean
+  isLoading: boolean
+  error: string | null
+}
+
+export function useDatabase(): UseDatabaseResult {
   const [isReady, setIsReady] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [dbRef, setDbRef] = useState<any>(null)
+  const [dbRef, setDbRef] = useState<SupabaseDatabaseInstance | null>(null)
 
-  useEffect(() => {
-    const initializeDb = async () => {
-      try {
-        const mod: any = await import("@/lib/database")
-        const instance = mod?.db ?? mod?.default
-        if (!instance) {
-          throw new Error("Database instance is not available")
-        }
-        await instance.initialize()
-        setDbRef(instance)
-        setIsReady(true)
-      } catch (err) {
-  console.error("[v0] Database initialization failed:", err)
-        setError(err instanceof Error ? err.message : "Database initialization failed")
-      } finally {
-        setIsLoading(false)
+  const initializeDb = useCallback(async () => {
+    try {
+      const mod: typeof import("@/lib/database") = await import("@/lib/database")
+      const instance = mod.db ?? null
+
+      if (!instance) {
+        throw new Error("Database instance is not available")
       }
-    }
 
-    initializeDb()
+      await instance.initialize()
+      setDbRef(instance)
+      setIsReady(true)
+    } catch (err: unknown) {
+      console.error("[v0] Database initialization failed:", err)
+      setError(err instanceof Error ? err.message : "Database initialization failed")
+    } finally {
+      setIsLoading(false)
+    }
   }, [])
 
+  useEffect(() => {
+    void initializeDb()
+  }, [initializeDb])
+
   return {
-  db: isReady ? dbRef : null,
+    db: isReady ? dbRef : null,
     isReady,
     isLoading,
     error,
   }
 }
 
-export function useGlobalStats(displayCurrency?: 'EUR'|'CFA'|'USD') {
+export function useGlobalStats(displayCurrency?: CurrencyCode) {
   const [stats, setStats] = useState({
     totalExpenses: 0,
     totalBudgets: 0,
@@ -53,21 +64,22 @@ export function useGlobalStats(displayCurrency?: 'EUR'|'CFA'|'USD') {
   })
   const [isLoading, setIsLoading] = useState(true)
   const { isReady, db } = useDatabase()
+  const loadStats = useCallback(async () => {
+    if (!isReady || !db) {
+      return
+    }
 
-  const loadStats = async () => {
-    if (!isReady || !db) return
-    
     setIsLoading(true)
     try {
       const globalStats = await db.getGlobalStats()
-      // Choisir les totaux selon la devise demandée (si fournie)
+
       if (displayCurrency) {
-        const cur = displayCurrency
-        const totals = cur === 'CFA'
-          ? { exp: (globalStats.totalExpenses_cfa ?? 0), bud: (globalStats.totalBudgets_cfa ?? 0) }
-          : cur === 'USD'
-          ? { exp: (globalStats.totalExpenses_usd ?? 0), bud: (globalStats.totalBudgets_usd ?? 0) }
-          : { exp: (globalStats.totalExpenses_eur ?? globalStats.totalExpenses ?? 0), bud: (globalStats.totalBudgets_eur ?? globalStats.totalBudgets ?? 0) }
+        const totals = displayCurrency === 'CFA'
+          ? { exp: globalStats.totalExpenses_cfa ?? 0, bud: globalStats.totalBudgets_cfa ?? 0 }
+          : displayCurrency === 'USD'
+          ? { exp: globalStats.totalExpenses_usd ?? 0, bud: globalStats.totalBudgets_usd ?? 0 }
+          : { exp: globalStats.totalExpenses_eur ?? globalStats.totalExpenses ?? 0, bud: globalStats.totalBudgets_eur ?? globalStats.totalBudgets ?? 0 }
+
         setStats({
           ...globalStats,
           totalExpenses: totals.exp,
@@ -82,25 +94,24 @@ export function useGlobalStats(displayCurrency?: 'EUR'|'CFA'|'USD') {
     } finally {
       setIsLoading(false)
     }
-  }
+  }, [db, displayCurrency, isReady])
 
   useEffect(() => {
-    loadStats()
-  }, [isReady, db, displayCurrency])
+    void loadStats()
+  }, [loadStats])
 
   return { stats, isLoading, refetch: loadStats }
 }
 
 export function useRecentTransactions(limit = 10) {
-  const [transactions, setTransactions] = useState<any[]>([])
+  const [transactions, setTransactions] = useState<Transaction[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const { isReady, db } = useDatabase()
-
-  const loadTransactions = async () => {
+  const loadTransactions = useCallback(async () => {
     if (!isReady || !db) {
       return
     }
-    
+
     setIsLoading(true)
     try {
       const recentTransactions = await db.getRecentTransactions(limit)
@@ -110,49 +121,65 @@ export function useRecentTransactions(limit = 10) {
     } finally {
       setIsLoading(false)
     }
-  }
+  }, [db, isReady, limit])
 
   useEffect(() => {
-    loadTransactions()
-  }, [isReady, db, limit])
+    void loadTransactions()
+  }, [loadTransactions])
 
   return { transactions, isLoading, refetch: loadTransactions }
 }
 
-export function useUserProjects(userId: number) {
-  const [projects, setProjects] = useState<any[]>([])
+type UseUserProjectsResult = {
+  projects: ProjectWithId[]
+  isLoading: boolean
+  refetch: () => Promise<void>
+}
+
+export function useUserProjects(userId: string | number | null | undefined): UseUserProjectsResult {
+  const [projects, setProjects] = useState<ProjectWithId[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const { isReady, db } = useDatabase()
 
-  // Déclare la fonction de chargement en dehors du useEffect pour pouvoir l'utiliser dans refetch
-  const loadProjects = async () => {
-    if (!isReady || !db || !userId) return
+  const normalizedUserId = typeof userId === "string" || typeof userId === "number" ? userId : null
+
+  const loadProjects = useCallback(async () => {
+    if (!isReady || !db || normalizedUserId == null) {
+      setProjects([])
+      setIsLoading(false)
+      return
+    }
+
     setIsLoading(true)
+
     try {
-      const userProjects = await db.getUserProjects(userId)
-      setProjects(userProjects)
+      const userProjects = await db.getUserProjects(normalizedUserId)
+      const normalizedProjects = (userProjects ?? []).filter((project): project is ProjectWithId =>
+        project?.id != null,
+      )
+      setProjects(normalizedProjects)
     } catch (error) {
       console.error("Failed to load user projects:", error)
     } finally {
       setIsLoading(false)
     }
-  }
+  }, [db, isReady, normalizedUserId])
 
   useEffect(() => {
-    loadProjects()
-  }, [isReady, db, userId])
+    void loadProjects()
+  }, [loadProjects])
 
   return { projects, isLoading, refetch: loadProjects }
 }
 
-export function useProjectStats(projectId: number, currency?: 'EUR'|'CFA'|'USD') {
+export function useProjectStats(projectId: number, currency?: CurrencyCode) {
   const [stats, setStats] = useState({
-  totalExpenses: 0,
-  totalBudgets: 0,
-  balance: 0,
-  expensesByCategory: [] as { name: string; value: number; color: string }[],
-  budgetsByCategory: [] as { name: string; value: number; color: string }[],
-  transactions: [] as any[],
+    totalExpenses: 0,
+    totalBudgets: 0,
+    balance: 0,
+    expensesByCategory: [] as { name: string; value: number; color: string }[],
+    budgetsByCategory: [] as { name: string; value: number; color: string }[],
+    transactions: [] as Transaction[],
   })
   const [isLoading, setIsLoading] = useState(true)
   const { isReady, db } = useDatabase()
@@ -163,27 +190,26 @@ export function useProjectStats(projectId: number, currency?: 'EUR'|'CFA'|'USD')
 
     const loadProjectStats = async () => {
       try {
-  if (!db) return
-  // Get project transactions
-  const transactions = await db.getProjectTransactions(projectId)
+        if (!db) return
 
-        // Calculate totals
-  const expenses = transactions.filter((t: any) => t.type === "expense")
-  const budgets = transactions.filter((t: any) => t.type === "budget")
+        const result = await db.getProjectTransactions(projectId)
+        const transactions = Array.isArray(result) ? result.filter(isTransactionRecord) : []
 
-  const getAmt = (t: any) => {
-    if (currency === 'CFA') return Number(t.amount_cfa ?? 0)
-    if (currency === 'USD') return Number(t.amount_usd ?? 0)
-    return Number(t.amount_eur ?? t.amount ?? 0)
-  }
+        const expenses = transactions.filter((transaction) => transaction.type === "expense")
+        const budgets = transactions.filter((transaction) => transaction.type === "budget")
 
-  const totalExpenses = expenses.reduce((sum: number, t: any) => sum + getAmt(t), 0)
-  const totalBudgets = budgets.reduce((sum: number, t: any) => sum + getAmt(t), 0)
+        const getAmountForCurrency = (transaction: Transaction) => {
+          if (currency === "CFA") return Number(transaction.amount_cfa ?? 0)
+          if (currency === "USD") return Number(transaction.amount_usd ?? 0)
+          return Number(transaction.amount_eur ?? transaction.amount ?? 0)
+        }
+
+        const totalExpenses = expenses.reduce((sum, transaction) => sum + getAmountForCurrency(transaction), 0)
+        const totalBudgets = budgets.reduce((sum, transaction) => sum + getAmountForCurrency(transaction), 0)
         const balance = totalBudgets - totalExpenses
 
-        // Group by categories
-  const expensesByCategory = groupTransactionsByCategory(expenses, currency)
-  const budgetsByCategory = groupTransactionsByCategory(budgets, currency)
+        const expensesByCategory = groupTransactionsByCategory(expenses, currency)
+        const budgetsByCategory = groupTransactionsByCategory(budgets, currency)
 
         setStats({
           totalExpenses,
@@ -201,7 +227,7 @@ export function useProjectStats(projectId: number, currency?: 'EUR'|'CFA'|'USD')
     }
 
     loadProjectStats()
-  }, [isReady, db, projectId, reloadTick, currency])
+  }, [currency, db, isReady, projectId, reloadTick])
 
   // Rafraîchir sur événement global (ex: suppression transaction)
   useEffect(() => {
@@ -210,37 +236,45 @@ export function useProjectStats(projectId: number, currency?: 'EUR'|'CFA'|'USD')
     return () => window.removeEventListener('expenshare:project-updated', onUpdated)
   }, [])
 
-  return { stats, isLoading, refetch: () => setIsLoading(true) }
+  const refetch = useCallback(() => {
+    setReloadTick((value) => value + 1)
+  }, [])
+
+  return { stats, isLoading, refetch }
 }
 
-function groupTransactionsByCategory(transactions: any[], currency?: 'EUR'|'CFA'|'USD') {
-  const categoryMap = new Map()
+function groupTransactionsByCategory(transactions: Transaction[], currency?: CurrencyCode) {
+  const categoryTotals = new Map<string, number>()
 
   transactions.forEach((transaction) => {
     // Si parent_category_name existe, on construit le label Catégorie/Sous-catégorie
-    let label = ""
-    if (transaction.parent_category_name) {
-      label = `${transaction.parent_category_name}/${transaction.category_name}`
-    } else {
-      label = transaction.category_name || "Sans catégorie"
-    }
-  let amount = 0
-  if (currency === 'CFA') amount = Number(transaction.amount_cfa ?? 0)
-  else if (currency === 'USD') amount = Number(transaction.amount_usd ?? 0)
-  else amount = Number(transaction.amount_eur ?? transaction.amount ?? 0)
+    const label = transaction.parent_category_name
+      ? `${transaction.parent_category_name}/${transaction.category_name}`
+      : transaction.category_name ?? "Sans catégorie"
 
-    if (categoryMap.has(label)) {
-      categoryMap.set(label, categoryMap.get(label) + amount)
-    } else {
-      categoryMap.set(label, amount)
-    }
+    let amount = 0
+    if (currency === "CFA") amount = Number(transaction.amount_cfa ?? 0)
+    else if (currency === "USD") amount = Number(transaction.amount_usd ?? 0)
+    else amount = Number(transaction.amount_eur ?? transaction.amount ?? 0)
+
+    categoryTotals.set(label, (categoryTotals.get(label) ?? 0) + amount)
   })
 
-  return Array.from(categoryMap.entries()).map(([name, value], index) => ({
+  return Array.from(categoryTotals.entries()).map(([name, value], index) => ({
     name,
     value,
     color: getColorForIndex(index),
   }))
+}
+
+const isTransactionRecord = (value: unknown): value is Transaction => {
+  if (typeof value !== "object" || value === null) {
+    return false
+  }
+  const record = value as Record<string, unknown>
+  const type = record.type
+  const amount = record.amount
+  return (type === "expense" || type === "budget") && typeof amount === "number"
 }
 
 function getColorForIndex(index: number): string {

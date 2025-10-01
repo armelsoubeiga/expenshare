@@ -8,31 +8,78 @@ import { Database } from '@/lib/database.types'
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
 
+type UserCreationPayload = {
+  name: string
+  pin_hash: string
+  is_admin?: boolean
+  created_at?: string
+}
+
+const isUserCreationPayload = (value: unknown): value is UserCreationPayload => {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+
+  const candidate = value as Record<string, unknown>
+
+  if (typeof candidate.name !== 'string' || candidate.name.trim().length === 0) {
+    return false
+  }
+
+  if (typeof candidate.pin_hash !== 'string' || candidate.pin_hash.trim().length === 0) {
+    return false
+  }
+
+  if (
+    'is_admin' in candidate &&
+    typeof candidate.is_admin !== 'boolean' &&
+    typeof candidate.is_admin !== 'undefined'
+  ) {
+    return false
+  }
+
+  if (
+    'created_at' in candidate &&
+    typeof candidate.created_at !== 'string' &&
+    typeof candidate.created_at !== 'undefined'
+  ) {
+    return false
+  }
+
+  return true
+}
+
 export async function POST(req: NextRequest) {
   if (!url || !serviceKey) {
     return NextResponse.json({ error: 'Service key not configured' }, { status: 503 })
   }
 
   try {
-    const payload = await req.json()
-    if (!payload?.name || !payload?.pin_hash) {
+    const payload = (await req.json()) as unknown
+
+    if (!isUserCreationPayload(payload)) {
       return NextResponse.json({ error: 'Invalid payload' }, { status: 400 })
     }
-    
+
+    const { name, pin_hash, is_admin = false, created_at } = payload
+
+    const timestamp = created_at || new Date().toISOString()
+
     console.log('[API] Creating user with payload:', {
-      ...payload,
+      name,
+      is_admin,
+      created_at: timestamp,
       pin_hash: '[MASKED]',
-      created_at: payload.created_at || new Date().toISOString(),
     })
-    
+
     const supabase = createClient<Database>(url, serviceKey)
     const { data, error } = await supabase
       .from('users')
       .insert({
-        name: String(payload.name),
-        pin_hash: String(payload.pin_hash),
-        is_admin: !!payload.is_admin,
-        created_at: payload.created_at || new Date().toISOString(),
+        name,
+        pin_hash,
+        is_admin,
+        created_at: timestamp,
       })
       .select('id')
       .single()
@@ -52,10 +99,20 @@ export async function POST(req: NextRequest) {
       }, { status: 400 })
     }
     
+    if (!data) {
+      console.error('[API] Unexpected: insertion succeeded but no data returned')
+      return NextResponse.json({ error: 'User creation succeeded without response data' }, { status: 500 })
+    }
+
     console.log('[API] User created successfully:', data)
-    return NextResponse.json({ id: data!.id }, { status: 201 })
-  } catch (e: any) {
-    console.error('[API] Unexpected error:', e)
-    return NextResponse.json({ error: e?.message || 'Unknown error' }, { status: 500 })
+    return NextResponse.json({ id: data.id }, { status: 201 })
+  } catch (error: unknown) {
+    console.error('[API] Unexpected error:', error)
+
+    if (error instanceof Error) {
+      return NextResponse.json({ error: error.message }, { status: 500 })
+    }
+
+    return NextResponse.json({ error: 'Unknown error' }, { status: 500 })
   }
 }

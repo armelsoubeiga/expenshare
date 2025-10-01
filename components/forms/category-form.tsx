@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback, useMemo } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -13,6 +13,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Badge } from "@/components/ui/badge"
 import { FolderTree } from "lucide-react"
 import { db } from "@/lib/database"
+import type { Category } from "@/lib/types"
 
 interface CategoryFormProps {
   isOpen: boolean
@@ -22,7 +23,7 @@ interface CategoryFormProps {
 }
 
 export function CategoryForm({ isOpen, onClose, onSuccess, projectId }: CategoryFormProps) {
-  const [categories, setCategories] = useState<any[]>([])
+  const [categories, setCategories] = useState<Category[]>([])
   const [formData, setFormData] = useState({
     name: "",
     parentId: "0", // Updated default value to be a non-empty string
@@ -30,20 +31,25 @@ export function CategoryForm({ isOpen, onClose, onSuccess, projectId }: Category
   const [error, setError] = useState("")
   const [isLoading, setIsLoading] = useState(false)
 
-  useEffect(() => {
-    if (isOpen && projectId) {
-      loadCategories()
-    }
-  }, [isOpen, projectId])
-
-  const loadCategories = async () => {
+  const loadCategories = useCallback(async () => {
     try {
       const projectCategories = await db.getProjectCategories(projectId)
       setCategories(projectCategories)
-    } catch (error) {
-      console.error("Failed to load categories:", error)
+    } catch (loadError) {
+      console.error("Failed to load categories:", loadError)
     }
-  }
+  }, [projectId])
+
+  const getCategoryIdentifier = useCallback(
+    (category: Category) => (category.id != null ? category.id.toString() : `name:${category.name}`),
+    [],
+  )
+
+  useEffect(() => {
+    if (isOpen && projectId) {
+      void loadCategories()
+    }
+  }, [isOpen, projectId, loadCategories])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -55,7 +61,7 @@ export function CategoryForm({ isOpen, onClose, onSuccess, projectId }: Category
 
     // Check if we're trying to create a level 4 category (max is 3)
     if (formData.parentId) {
-      const parentCategory = categories.find((cat) => cat.id.toString() === formData.parentId)
+      const parentCategory = categories.find((cat) => getCategoryIdentifier(cat) === formData.parentId)
       if (parentCategory && parentCategory.level >= 3) {
         setError("Maximum 3 niveaux de catégories autorisés")
         return
@@ -66,10 +72,15 @@ export function CategoryForm({ isOpen, onClose, onSuccess, projectId }: Category
     setError("")
 
     try {
+      const parentIdValue =
+        formData.parentId && formData.parentId !== "0" && !formData.parentId.startsWith("name:")
+          ? Number.parseInt(formData.parentId, 10)
+          : undefined
+
       await db.createCategory(
         projectId,
         formData.name,
-        formData.parentId ? Number.parseInt(formData.parentId) : undefined,
+        Number.isNaN(parentIdValue) ? undefined : parentIdValue,
       )
 
       // Reset form
@@ -80,17 +91,17 @@ export function CategoryForm({ isOpen, onClose, onSuccess, projectId }: Category
 
       await loadCategories() // Refresh categories
       onSuccess()
-    } catch (err) {
+    } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Erreur lors de la création de la catégorie")
     } finally {
       setIsLoading(false)
     }
   }
 
-  const getAvailableParents = () => {
-    // Only show categories with level < 3 as potential parents
-    return categories.filter((cat) => cat.level < 3)
-  }
+  const availableParents = useMemo(
+    () => categories.filter((cat) => cat.level < 3),
+    [categories],
+  )
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -121,7 +132,7 @@ export function CategoryForm({ isOpen, onClose, onSuccess, projectId }: Category
             />
           </div>
 
-          {getAvailableParents().length > 0 && (
+          {availableParents.length > 0 && (
             <div className="space-y-2">
               <Label htmlFor="parent">Catégorie parente (optionnel)</Label>
               <Select
@@ -132,19 +143,22 @@ export function CategoryForm({ isOpen, onClose, onSuccess, projectId }: Category
                   <SelectValue placeholder="Aucune (catégorie principale)" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="0">Aucune (catégorie principale)</SelectItem>{" "}
-                  {/* Updated value prop to be a non-empty string */}
-                  {getAvailableParents().map((category) => (
-                    <SelectItem key={category.id} value={category.id.toString()}>
-                      <div className="flex items-center gap-2">
-                        <span>{"  ".repeat(category.level - 1)}└</span>
-                        <span>{category.name}</span>
-                        <Badge variant="outline" className="text-xs">
-                          Niveau {category.level}
-                        </Badge>
-                      </div>
-                    </SelectItem>
-                  ))}
+                  <SelectItem value="0">Aucune (catégorie principale)</SelectItem>
+                  {/* Updated value prop to be une chaîne non vide */}
+                  {availableParents.map((category) => {
+                    const categoryValue = getCategoryIdentifier(category)
+                    return (
+                      <SelectItem key={categoryValue} value={categoryValue}>
+                        <div className="flex items-center gap-2">
+                          <span>{"  ".repeat(category.level - 1)}└</span>
+                          <span>{category.name}</span>
+                          <Badge variant="outline" className="text-xs">
+                            Niveau {category.level}
+                          </Badge>
+                        </div>
+                      </SelectItem>
+                    )
+                  })}
                 </SelectContent>
               </Select>
             </div>
@@ -156,7 +170,7 @@ export function CategoryForm({ isOpen, onClose, onSuccess, projectId }: Category
               <Label>Catégories existantes</Label>
               <Card className="p-3 max-h-32 overflow-y-auto">
                 {categories.map((category) => (
-                  <div key={category.id} className="flex items-center gap-2 py-1">
+                  <div key={getCategoryIdentifier(category)} className="flex items-center gap-2 py-1">
                     <span className="text-muted-foreground">
                       {"  ".repeat(category.level - 1)}
                       {category.level > 1 ? "└ " : ""}

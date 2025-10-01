@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useEffect } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -79,7 +79,7 @@ export function ProjectForm({ isOpen, onClose, onSuccess }: ProjectFormProps) {
       const currentUserData = JSON.parse(storedUser)
       
       // Create project
-      const projectId = await db.createProject(
+      await db.createProject(
         formData.name,
         formData.description || "",
         formData.icon,

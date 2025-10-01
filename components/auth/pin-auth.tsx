@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -9,6 +9,8 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { KeyRound, User, Loader2 } from "lucide-react"
 import { useDatabase } from "@/hooks/use-database"
 import { DatabaseError } from "@/components/ui/database-error"
+import type { SupabaseDatabaseInstance } from "@/lib/database-supabase"
+import type { User as StoredUser } from "@/lib/types"
 
 interface PinAuthProps {
   onAuthSuccess: () => void
@@ -16,6 +18,7 @@ interface PinAuthProps {
 
 export function PinAuth({ onAuthSuccess }: PinAuthProps) {
   const { db, isLoading: dbLoading, isReady, error: dbError } = useDatabase()
+  const database = (db as SupabaseDatabaseInstance | null)
   const [step, setStep] = useState<"check" | "setup-name" | "setup-pin" | "confirm-pin" | "login" | "pin-only">("check")
   const [userName, setUserName] = useState("")
   const [pin, setPin] = useState("")
@@ -24,23 +27,17 @@ export function PinAuth({ onAuthSuccess }: PinAuthProps) {
   const [loginPin, setLoginPin] = useState("")
   const [error, setError] = useState("")
   const [isLoading, setIsLoading] = useState(false)
-  const [existingUsers, setExistingUsers] = useState<any[]>([])
+  const [existingUsers, setExistingUsers] = useState<StoredUser[]>([])
 
-  useEffect(() => {
-    if (isReady && db) {
-      checkExistingUsers()
-    }
-  }, [isReady, db])
-
-  const checkExistingUsers = async () => {
-    if (!db || !db.isReady) {
+  const checkExistingUsers = useCallback(async () => {
+    if (!database || !database.isReady) {
       console.log("[v0] Database not ready yet")
       return
     }
 
     try {
       console.log("[v0] Checking existing users...")
-      const users = await db.users.toArray()
+      const users = await database.users.toArray()
       console.log("[v0] Found users:", users.length)
       setExistingUsers(users)
 
@@ -49,12 +46,18 @@ export function PinAuth({ onAuthSuccess }: PinAuthProps) {
       } else {
         setStep("pin-only")
       }
-    } catch (error) {
+    } catch (error: unknown) {
       console.error("[v0] Error checking users:", error)
       setError("Erreur lors de l'initialisation de la base de données")
       setStep("setup-name")
     }
-  }
+  }, [database])
+
+  useEffect(() => {
+    if (isReady && database) {
+      void checkExistingUsers()
+    }
+  }, [isReady, database, checkExistingUsers])
 
   const handleNameSubmit = async () => {
     if (!userName.trim()) {
@@ -62,9 +65,9 @@ export function PinAuth({ onAuthSuccess }: PinAuthProps) {
       return
     }
     // Vérifier unicité (casse respectée)
-    if (db && db.isReady) {
-      const users = await db.users.toArray()
-      if (users.some((u: any) => u.name === userName)) {
+    if (database && database.isReady) {
+      const users = await database.users.toArray()
+      if (users.some((u) => u.name === userName)) {
         setError("Ce nom d'utilisateur existe déjà")
         return
       }
@@ -88,7 +91,7 @@ export function PinAuth({ onAuthSuccess }: PinAuthProps) {
       return
     }
 
-    if (!db || !db.isReady) {
+    if (!database || !database.isReady) {
       setError("Base de données non disponible")
       return
     }
@@ -98,14 +101,14 @@ export function PinAuth({ onAuthSuccess }: PinAuthProps) {
 
     try {
       // Vérifier unicité (casse respectée)
-      const users = await db.users.toArray()
-      if (users.some((u: any) => u.name === userName)) {
+      const users = await database.users.toArray()
+      if (users.some((u) => u.name === userName)) {
         setIsLoading(false)
         setError("Ce nom d'utilisateur existe déjà")
         return
       }
       const hashedPin = btoa(pin + "salt_" + userName)
-      const userId = await db.users.add({
+      const userId = await database.users.add({
         name: userName,
         pin_hash: hashedPin,
         created_at: new Date().toISOString(),
@@ -132,10 +135,11 @@ export function PinAuth({ onAuthSuccess }: PinAuthProps) {
         setIsLoading(false)
         onAuthSuccess()
       }, 500)
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('[PinAuth] Create user failed:', error)
       setIsLoading(false)
-      setError(typeof error?.message === 'string' ? error.message : "Erreur lors de la création du compte")
+      const message = error instanceof Error ? error.message : "Erreur lors de la création du compte"
+      setError(message)
     }
   }
 
@@ -148,7 +152,7 @@ export function PinAuth({ onAuthSuccess }: PinAuthProps) {
       setError("Le code PIN doit contenir exactement 4 chiffres")
       return
     }
-    if (!db || !db.isReady) {
+    if (!database || !database.isReady) {
       setError("Base de données non disponible")
       return
     }
@@ -156,7 +160,8 @@ export function PinAuth({ onAuthSuccess }: PinAuthProps) {
     setError("")
     try {
       // Recherche par nom exact (casse respectée)
-  const user = (await db.users.toArray()).find((u: any) => u.name === loginUserName)
+      const users = await database.users.toArray()
+      const user = users.find((u) => u.name === loginUserName)
       if (!user) {
         setIsLoading(false)
         setError("Nom d'utilisateur ou PIN incorrect")
@@ -188,14 +193,15 @@ export function PinAuth({ onAuthSuccess }: PinAuthProps) {
       )
       setIsLoading(false)
       onAuthSuccess()
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('[PinAuth] Login failed:', error)
       setIsLoading(false)
-      setError(typeof error?.message === 'string' ? error.message : "Erreur lors de la connexion")
+      const message = error instanceof Error ? error.message : "Erreur lors de la connexion"
+      setError(message)
     }
   }
 
-  const renderPinInput = (value: string, onChange: (value: string) => void, placeholder: string) => (
+  const renderPinInput = (value: string, onChange: (value: string) => void, placeholderLabel: string) => (
     <div className="flex gap-2 justify-center">
       {[0, 1, 2, 3].map((index) => (
         <Input
@@ -218,8 +224,8 @@ export function PinAuth({ onAuthSuccess }: PinAuthProps) {
           onKeyDown={(e) => {
             // Handle backspace
             if (e.key === "Backspace" && !value[index] && index > 0) {
-              const target = e.target as HTMLElement;
-              const prevInput = target.parentElement?.children[index - 1] as HTMLInputElement;
+              const target = e.target as HTMLInputElement
+              const prevInput = target.parentElement?.children[index - 1] as HTMLInputElement
               prevInput?.focus()
             }
             // Handle enter
@@ -227,6 +233,8 @@ export function PinAuth({ onAuthSuccess }: PinAuthProps) {
               if (step === "pin-only") handleLogin()
             }
           }}
+          aria-label={`${placeholderLabel} caractère ${index + 1}`}
+          placeholder={index === 0 ? placeholderLabel : ""}
         />
       ))}
     </div>
@@ -312,7 +320,7 @@ export function PinAuth({ onAuthSuccess }: PinAuthProps) {
               </Button>
               {existingUsers.length > 0 && (
                 <Button variant="outline" onClick={() => setStep("pin-only")} className="w-full">
-                  J'ai déjà un compte
+                  J&rsquo;ai déjà un compte
                 </Button>
               )}
             </>
@@ -352,7 +360,7 @@ export function PinAuth({ onAuthSuccess }: PinAuthProps) {
           {step === "pin-only" && (
             <>
               <div className="space-y-2 flex flex-col items-center">
-                <Label htmlFor="login-username" className="text-center w-full">Nom d'utilisateur</Label>
+                <Label htmlFor="login-username" className="text-center block w-56 mx-auto">Nom d&rsquo;utilisateur</Label>
                 <div className="flex justify-center w-full">
                   <Input
                     id="login-username"
@@ -365,7 +373,7 @@ export function PinAuth({ onAuthSuccess }: PinAuthProps) {
                     style={{ maxWidth: 224 }}
                   />
                 </div>
-                <Label className="text-center block w-full">Code PIN</Label>
+                <Label className="text-center block w-56 mx-auto mt-4">Code PIN</Label>
                 {renderPinInput(loginPin, setLoginPin, "Code PIN")}
               </div>
               <Button onClick={handleLogin} className="w-full" disabled={loginPin.length !== 4 || !loginUserName.trim() || isLoading}>

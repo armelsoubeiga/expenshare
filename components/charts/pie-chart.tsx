@@ -2,14 +2,19 @@
 
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from "recharts"
 
-interface PieChartData {
+interface PieChartDatum {
   name: string
   value: number
   color: string
+  parent?: string
+}
+
+interface ExtendedPieChartDatum extends PieChartDatum {
+  total: number
 }
 
 interface CustomPieChartProps {
-  data: PieChartData[]
+  data: PieChartDatum[]
   title: string
   centerLabel?: string
   centerValue?: string
@@ -17,20 +22,41 @@ interface CustomPieChartProps {
   currency?: "EUR" | "USD" | "XOF"
 }
 
+type PieLabelProps = {
+  cx?: number
+  cy?: number
+  midAngle?: number
+  innerRadius?: number
+  outerRadius?: number
+  percent?: number
+  payload?: ExtendedPieChartDatum
+}
+
+type PieTooltipPayload = {
+  name: string
+  value: number
+  payload: ExtendedPieChartDatum
+}
+
+type PieTooltipProps = {
+  active?: boolean
+  payload?: PieTooltipPayload[]
+}
+
 export function CustomPieChart({ data, title, centerLabel, centerValue, size = 200, currency = "EUR" }: CustomPieChartProps) {
   // Quand beaucoup d'éléments, on limite la légende et on active le scroll
   const tooManyLegendItems = (data?.length ?? 0) > 12
   const containerHeight = size + (tooManyLegendItems ? 120 : 80)
   // Affichage label catégorie/sous-catégorie
-  const renderCustomizedLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent, name, parent }: any) => {
-    if (percent < 0.08) return null // Don't show labels for slices < 8%
+  const renderCustomizedLabel = ({ cx = 0, cy = 0, midAngle = 0, outerRadius = 0, percent = 0, payload }: PieLabelProps) => {
+    if (!payload || percent < 0.08) return null // Don't show labels for slices < 8%
 
     const RADIAN = Math.PI / 180
     const radius = outerRadius + 20 // Position labels outside the pie
     const x = cx + radius * Math.cos(-midAngle * RADIAN)
     const y = cy + radius * Math.sin(-midAngle * RADIAN)
     // Ajoute parent/category si présent
-    const label = parent ? `${parent}/${name}` : name
+    const label = payload.parent ? `${payload.parent}/${payload.name}` : payload.name
     return (
       <text
         x={x}
@@ -47,11 +73,14 @@ export function CustomPieChart({ data, title, centerLabel, centerValue, size = 2
     )
   }
 
-  const CustomTooltip = ({ active, payload }: any) => {
+  const renderTooltipContent = ({ active, payload }: PieTooltipProps) => {
     if (active && payload && payload.length) {
-      const data = payload[0]
+      const datum = payload[0]
+      if (!datum?.payload) {
+        return null
+      }
       // Ajoute parent/category si présent
-      const label = data.payload.parent ? `${data.payload.parent}/${data.name}` : data.name
+      const label = datum.payload.parent ? `${datum.payload.parent}/${datum.name}` : datum.name
       return (
         <div className="bg-background border border-border rounded-lg p-3 shadow-lg">
           <p className="font-medium">{label}</p>
@@ -59,10 +88,10 @@ export function CustomPieChart({ data, title, centerLabel, centerValue, size = 2
             {new Intl.NumberFormat("fr-FR", {
               style: "currency",
               currency,
-            }).format(data.value)}
+            }).format(datum.value)}
           </p>
           <p className="text-xs text-muted-foreground">
-            {((data.value / data.payload.total) * 100).toFixed(1)}% du total
+            {((datum.value / datum.payload.total) * 100).toFixed(1)}% du total
           </p>
         </div>
       )
@@ -82,7 +111,7 @@ export function CustomPieChart({ data, title, centerLabel, centerValue, size = 2
   }
 
   const total = data.reduce((sum, item) => sum + item.value, 0)
-  const dataWithTotal = data.map((item) => ({ ...item, total }))
+  const dataWithTotal: ExtendedPieChartDatum[] = data.map((item) => ({ ...item, total }))
 
   return (
     <div className="w-full">
@@ -106,7 +135,7 @@ export function CustomPieChart({ data, title, centerLabel, centerValue, size = 2
               <Cell key={`cell-${index}`} fill={entry.color} />
             ))}
           </Pie>
-          <Tooltip content={<CustomTooltip />} />
+          <Tooltip content={renderTooltipContent} />
           <Legend
             verticalAlign="bottom"
             align="center"
@@ -117,8 +146,8 @@ export function CustomPieChart({ data, title, centerLabel, centerValue, size = 2
               overflowY: tooManyLegendItems ? 'auto' : undefined,
               paddingTop: 8,
             }}
-            formatter={(value, entry) => (
-              <span style={{ color: entry.color }} className="text-xs sm:text-sm font-medium">
+            formatter={(value: string, entry) => (
+              <span style={{ color: entry && typeof entry === "object" ? (entry as { color?: string }).color : undefined }} className="text-xs sm:text-sm font-medium">
                 {value}
               </span>
             )}

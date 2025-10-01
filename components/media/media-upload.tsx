@@ -2,13 +2,14 @@
 
 import type React from "react"
 
-import { useState, useRef, forwardRef, useImperativeHandle } from "react"
+import { useState, useRef, forwardRef, useImperativeHandle, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Camera, Mic, Upload, X, Play, Pause, Download } from "lucide-react"
 import { MediaFile } from "@/lib/media-types"
 import { supabase } from "@/lib/supabase"
+import NextImage from "next/image"
 
 export type MediaUploadHandle = {
   startAudioRecording: () => Promise<void>
@@ -93,7 +94,7 @@ export const MediaUpload = forwardRef<MediaUploadHandle, MediaUploadProps>(funct
     }
   }
 
-  const startRecording = async () => {
+  const startRecording = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       const mediaRecorder = new MediaRecorder(stream)
@@ -128,19 +129,31 @@ export const MediaUpload = forwardRef<MediaUploadHandle, MediaUploadProps>(funct
 
         onMediaAdd(mediaFile)
         stream.getTracks().forEach((track) => track.stop())
-        try { onRecordingStop && onRecordingStop(blob) } catch {}
+        try {
+          if (onRecordingStop) {
+            onRecordingStop(blob)
+          }
+        } catch {}
       }
 
       mediaRecorderRef.current = mediaRecorder
       mediaRecorder.start()
       setIsRecording(true)
       setRecordingTime(0)
-      try { onRecordingStart && onRecordingStart() } catch {}
+      try {
+        if (onRecordingStart) {
+          onRecordingStart()
+        }
+      } catch {}
 
       recordingIntervalRef.current = setInterval(() => {
         setRecordingTime((prev) => {
           const next = prev + 1
-          try { onRecordingTimeTick && onRecordingTimeTick(next) } catch {}
+          try {
+            if (onRecordingTimeTick) {
+              onRecordingTimeTick(next)
+            }
+          } catch {}
           return next
         })
       }, 1000)
@@ -148,9 +161,9 @@ export const MediaUpload = forwardRef<MediaUploadHandle, MediaUploadProps>(funct
       console.error("Error starting recording:", error)
       alert("Impossible d'accéder au microphone")
     }
-  }
+  }, [onMediaAdd, onRecordingStart, onRecordingStop, onRecordingTimeTick])
 
-  const stopRecording = () => {
+  const stopRecording = useCallback(() => {
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop()
       setIsRecording(false)
@@ -158,16 +171,17 @@ export const MediaUpload = forwardRef<MediaUploadHandle, MediaUploadProps>(funct
 
       if (recordingIntervalRef.current) {
         clearInterval(recordingIntervalRef.current)
+        recordingIntervalRef.current = null
       }
     }
-  }
+  }, [isRecording])
 
   useImperativeHandle(ref, () => ({
     startAudioRecording: startRecording,
     stopAudioRecording: stopRecording,
     getRecordingState: () => isRecording,
     getRecordingTime: () => recordingTime,
-  }), [isRecording, recordingTime])
+  }), [isRecording, recordingTime, startRecording, stopRecording])
 
   const playAudio = (mediaFile: MediaFile) => {
     if (playingAudio === mediaFile.id) {
@@ -257,10 +271,13 @@ export const MediaUpload = forwardRef<MediaUploadHandle, MediaUploadProps>(funct
               <div className="flex items-center gap-3">
                 {media.type === "image" ? (
                   <div className="relative w-12 h-12 rounded overflow-hidden bg-muted flex-shrink-0">
-                    <img
+                    <NextImage
                       src={media.url || "/placeholder.svg"}
                       alt={media.name}
-                      className="w-full h-full object-cover"
+                      fill
+                      className="object-cover"
+                      sizes="48px"
+                      unoptimized
                     />
                   </div>
                 ) : (

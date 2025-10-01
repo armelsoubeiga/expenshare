@@ -8,14 +8,6 @@ import { Input } from "@/components/ui/input"
 import { ArrowLeft, Loader2 } from "lucide-react"
 import { useDatabase } from "@/hooks/use-database"
 
-// Définition du type User pour ce composant
-interface User {
-  id?: number
-  name: string
-  pin: string
-  created_at: Date
-}
-
 interface PinChangeProps {
   isOpen: boolean
   onClose: () => void
@@ -29,7 +21,7 @@ export function PinChange({ isOpen, onClose }: PinChangeProps) {
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
   const [isLoading, setIsLoading] = useState(false)
-  const [userId, setUserId] = useState<number | null>(null)
+  const [userId, setUserId] = useState<string | null>(null)
 
   useEffect(() => {
     if (isOpen) {
@@ -40,12 +32,24 @@ export function PinChange({ isOpen, onClose }: PinChangeProps) {
       setError("")
       setSuccess("")
       setIsLoading(false)
+      setUserId(null)
       
       // Récupérer l'ID utilisateur
       const storedUser = localStorage.getItem("expenshare_user")
       if (storedUser) {
-        const userData = JSON.parse(storedUser)
-        setUserId(userData.id)
+        try {
+          const userData = JSON.parse(storedUser) as { id?: string | number }
+          if (typeof userData.id === "string") {
+            setUserId(userData.id)
+          } else if (typeof userData.id === "number") {
+            setUserId(String(userData.id))
+          } else {
+            setUserId(null)
+          }
+        } catch (parseError) {
+          console.warn("[PinChange] Impossible de parser l'utilisateur stocké:", parseError)
+          setUserId(null)
+        }
       }
     }
   }, [isOpen])
@@ -72,7 +76,7 @@ export function PinChange({ isOpen, onClose }: PinChangeProps) {
       return
     }
     
-    if (!db || !userId) {
+    if (!db || !isReady || !userId) {
       setError("Erreur d'initialisation")
       return
     }
@@ -88,23 +92,41 @@ export function PinChange({ isOpen, onClose }: PinChangeProps) {
         setIsLoading(false)
         return
       }
-      
-      // Utilisation d'une assertion de type
-      const userWithPin = user as any
-      
-      if (userWithPin.pin !== currentPin) {
+
+      const hashedCurrentPin = btoa(`${currentPin}salt_${user.name}`)
+
+      if (hashedCurrentPin !== user.pin_hash) {
         setError("PIN actuel incorrect")
         setIsLoading(false)
         return
       }
       
-      // Mettre à jour le PIN avec une assertion de type
-      await db.users.update(userId, { pin: newPin } as any)
+      const hashedNewPin = btoa(`${newPin}salt_${user.name}`)
+
+      await db.users.updatePinHash(userId, hashedNewPin)
       
       // Mettre à jour le stockage local
-      const storedUser = JSON.parse(localStorage.getItem("expenshare_user") || "{}")
-      storedUser.pin = newPin
-      localStorage.setItem("expenshare_user", JSON.stringify(storedUser))
+      try {
+        const storedUserRaw = localStorage.getItem("expenshare_user")
+        const storedUser = storedUserRaw ? (JSON.parse(storedUserRaw) as Record<string, unknown>) : {}
+        const updatedUser = {
+          ...storedUser,
+          id: storedUser.id ?? userId,
+          name: storedUser.name ?? user.name,
+          pin_hash: hashedNewPin,
+        }
+        localStorage.setItem("expenshare_user", JSON.stringify(updatedUser))
+      } catch (storageError) {
+        console.warn("[PinChange] Impossible de mettre à jour expenshare_user:", storageError)
+        localStorage.setItem(
+          "expenshare_user",
+          JSON.stringify({
+            id: userId,
+            name: user.name,
+            pin_hash: hashedNewPin,
+          }),
+        )
+      }
       
       setSuccess("PIN mis à jour avec succès")
       

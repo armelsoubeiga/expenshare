@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useCallback } from "react"
 import { useToast } from "@/hooks/use-toast"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -14,6 +14,7 @@ import { Plus, Minus, FileText, Loader2, Camera, Mic, Upload } from "lucide-reac
 import { MediaUpload, type MediaUploadHandle } from "@/components/media/media-upload"
 import { useDatabase } from "@/hooks/use-database"
 import { MediaFile } from "@/lib/media-types"
+import { Category, Note, ProjectWithId } from "@/lib/types"
 
 interface TransactionFormProps {
   isOpen: boolean
@@ -24,8 +25,8 @@ interface TransactionFormProps {
 export function TransactionForm({ isOpen, onClose, onSuccess }: TransactionFormProps) {
   const { toast } = useToast()
   const { db } = useDatabase()
-  const [projects, setProjects] = useState<any[]>([])
-  const [categories, setCategories] = useState<any[]>([])
+  const [projects, setProjects] = useState<ProjectWithId[]>([])
+  const [categories, setCategories] = useState<(Category & { id: number })[]>([])
   const [leafCategoryIds, setLeafCategoryIds] = useState<Set<number>>(new Set())
   const [formData, setFormData] = useState({
     projectId: "",
@@ -45,22 +46,8 @@ export function TransactionForm({ isOpen, onClose, onSuccess }: TransactionFormP
   const [isLoading, setIsLoading] = useState(false)
   const [isRecordingAudio, setIsRecordingAudio] = useState(false)
   const [recordingSeconds, setRecordingSeconds] = useState(0)
-  const [lastAudioSaved, setLastAudioSaved] = useState<string | null>(null)
 
-  useEffect(() => {
-    if (isOpen) {
-      loadUserProjects()
-      resetForm()
-    }
-  }, [isOpen])
-
-  useEffect(() => {
-    if (formData.projectId && formData.type === "expense") {
-      loadProjectCategories(Number.parseInt(formData.projectId))
-    }
-  }, [formData.projectId, formData.type])
-
-  const resetForm = () => {
+  const resetForm = useCallback(() => {
     setFormData({
       projectId: "",
       categoryId: "",
@@ -71,9 +58,9 @@ export function TransactionForm({ isOpen, onClose, onSuccess }: TransactionFormP
     })
     setMediaFiles([])
     setError("")
-  }
+  }, [])
 
-  const loadUserProjects = async () => {
+  const loadUserProjects = useCallback(async () => {
     if (!db) return
     try {
       // Récupérer l'utilisateur courant
@@ -83,24 +70,30 @@ export function TransactionForm({ isOpen, onClose, onSuccess }: TransactionFormP
       if (!currentUser) return
 
       // Obtenir les projets de l'utilisateur
-      const userProjects = await db.getUserProjects(currentUser.id)
+      const userId = currentUser.id
+      if (typeof userId !== "string" && typeof userId !== "number") {
+        throw new Error("Identifiant utilisateur invalide")
+      }
+      const userProjects = await db.getUserProjects(userId)
       setProjects(userProjects)
     } catch (error) {
       console.error("Failed to load projects:", error)
     }
-  }
+  }, [db])
 
-  const loadProjectCategories = async (projectId: number) => {
+  const loadProjectCategories = useCallback(async (projectId: number) => {
     if (!db) return
     try {
       // Obtenir les catégories du projet
       const projectCategories = await db.getProjectCategories(projectId)
       
       // Trier les catégories par niveau puis par nom
-  const sortedCategories = projectCategories.sort((a: any, b: any) => {
-        if (a.level !== b.level) return a.level - b.level
-        return a.name.localeCompare(b.name)
-      })
+      const sortedCategories = projectCategories
+        .filter((category): category is Category & { id: number } => category.id !== undefined)
+        .sort((a, b) => {
+          if (a.level !== b.level) return a.level - b.level
+          return a.name.localeCompare(b.name)
+        })
 
       setCategories(sortedCategories)
       // Construire l'ensemble des catégories parents (qui ont des enfants) pour déduire les feuilles
@@ -116,7 +109,20 @@ export function TransactionForm({ isOpen, onClose, onSuccess }: TransactionFormP
     } catch (error) {
       console.error("Failed to load categories:", error)
     }
-  }
+  }, [db])
+
+  useEffect(() => {
+    if (isOpen) {
+      loadUserProjects()
+      resetForm()
+    }
+  }, [isOpen, db, loadUserProjects, resetForm])
+
+  useEffect(() => {
+    if (formData.projectId && formData.type === "expense") {
+      loadProjectCategories(Number.parseInt(formData.projectId))
+    }
+  }, [formData.projectId, formData.type, db, loadProjectCategories])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -169,7 +175,7 @@ export function TransactionForm({ isOpen, onClose, onSuccess }: TransactionFormP
             content_type: "text",
             content: formData.description.trim(),
             file_path: undefined,
-          } as any)
+          } as Note)
         }
         // Médias
         for (const media of mediaFiles) {
@@ -179,7 +185,7 @@ export function TransactionForm({ isOpen, onClose, onSuccess }: TransactionFormP
             content_type: media.type === "image" ? "image" : media.type === "audio" ? "audio" : "text",
             content: media.url, // URL publique
             file_path: media.name,
-          } as any)
+          } as Note)
         }
       }
 
@@ -213,7 +219,7 @@ export function TransactionForm({ isOpen, onClose, onSuccess }: TransactionFormP
     })
   }
 
-  const getCategoryDisplayName = (category: any) => {
+  const getCategoryDisplayName = (category: Category & { id: number }) => {
     if (category.level === 1) return category.name
     const parentCategory = categories.find((c) => c.id === category.parent_id)
     return `${parentCategory?.name || ''}/${category.name}`
@@ -426,8 +432,8 @@ export function TransactionForm({ isOpen, onClose, onSuccess }: TransactionFormP
                       
                       <MediaUpload
                         id="audio-upload-btn"
-                        ref={audioUploadRef as any}
-                        onMediaAdd={(m) => { handleMediaAdd(m); setLastAudioSaved(m.name) }}
+                        ref={audioUploadRef}
+                        onMediaAdd={handleMediaAdd}
                         onMediaRemove={handleMediaRemove}
                         mediaFiles={mediaFiles}
                         maxFiles={10}

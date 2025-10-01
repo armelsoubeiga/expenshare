@@ -1,8 +1,7 @@
 "use client"
 
-import React, { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { formatCurrency } from '@/lib/utils'
 
@@ -21,16 +20,16 @@ export function MonthlyTrendChart({ expensesByMonth, budgetsByMonth }: MonthlyTr
   
   // Conversion des mois numériques en noms de mois abrégés français
   const getMonthName = (monthKey: string): string => {
-    const [year, month] = monthKey.split('-')
+  const [, month] = monthKey.split('-')
     const monthNames = ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sep", "Oct", "Nov", "Déc"]
     return monthNames[parseInt(month) - 1]
   }
 
   // Trouver la valeur maximale pour dimensionner le graphique
   const getMaxValue = (): number => {
-    let maxExpense = Math.max(...expensesByMonth.map(item => item.amount), 0)
-    let maxBudget = Math.max(...budgetsByMonth.map(item => item.amount), 0)
-    return Math.max(maxExpense, maxBudget) * 1.2 // Ajouter 20% pour la marge
+  const maxExpense = Math.max(...expensesByMonth.map(item => item.amount), 0)
+  const maxBudget = Math.max(...budgetsByMonth.map(item => item.amount), 0)
+  return Math.max(maxExpense, maxBudget) * 1.2 // Ajouter 20% pour la marge
   }
 
   const sortedExpenses = [...expensesByMonth].sort((a, b) => a.month.localeCompare(b.month))
@@ -103,7 +102,7 @@ export function MonthlyTrendChart({ expensesByMonth, budgetsByMonth }: MonthlyTr
             
             {/* Graphiques */}
             <div className="absolute top-0 bottom-0 left-0 right-0 flex items-end">
-              {months.map((month, index) => {
+              {months.map((month) => {
                 const expense = sortedExpenses.find(e => e.month === month)?.amount || 0
                 const budget = sortedBudgets.find(b => b.month === month)?.amount || 0
                 const expenseHeight = (expense / maxValue) * 100
