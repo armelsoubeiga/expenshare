@@ -234,7 +234,6 @@ export function PinAuth({ onAuthSuccess }: PinAuthProps) {
             }
           }}
           aria-label={`${placeholderLabel} caractère ${index + 1}`}
-          placeholder={index === 0 ? placeholderLabel : ""}
         />
       ))}
     </div>
