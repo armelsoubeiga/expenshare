@@ -17,6 +17,7 @@ import autoTable from "jspdf-autotable"
 interface ExportDialogProps {
   isOpen: boolean
   onClose: () => void
+  mode?: 'modal' | 'page'
 }
 
 type ExportProject = {
@@ -184,7 +185,7 @@ const normalizeTransactions = (input: unknown): ExportTransaction[] => {
 
 const toTimestamp = (value: string | null): number => (value ? new Date(value).getTime() : 0)
 
-export function ExportDialog({ isOpen, onClose }: ExportDialogProps) {
+export function ExportDialog({ isOpen, onClose, mode = 'modal' }: ExportDialogProps) {
   const { db, isReady } = useDatabase()
   const [projects, setProjects] = useState<ExportProject[]>([])
   const [selectedProjectId, setSelectedProjectId] = useState<string>("all")
@@ -195,7 +196,8 @@ export function ExportDialog({ isOpen, onClose }: ExportDialogProps) {
   const [projectCurrency, setProjectCurrency] = useState<CurrencyCode>("EUR")
 
   useEffect(() => {
-    if (!isOpen || !isReady || !db) return
+    if (mode !== "page" && !isOpen) return
+    if (!isReady || !db) return
     void (async () => {
       try {
         const storedUser = localStorage.getItem("expenshare_user")
@@ -375,7 +377,12 @@ export function ExportDialog({ isOpen, onClose }: ExportDialogProps) {
     download(new Blob([csv], { type: "text/csv" }), `expenshare-transactions-${new Date().toISOString().slice(0, 10)}.csv`)
   }
 
-  const exportAsPdf = (transactions: ExportTransaction[], options?: { project?: ExportProjectDetails; members?: string[] }) => {
+  const exportAsPdf = (transactions: ExportTransaction[], options?: {
+    project?: ExportProjectDetails
+    members?: string[]
+    transfers?: { outgoing: any[]; incoming: any[] }
+    effectiveBudget?: number
+  }) => {
     const doc = new jsPDF({ unit: "pt", format: "a4" })
     const margin = 40
     const drawSeparator = (y: number) => doc.line(margin, y, doc.internal.pageSize.getWidth() - margin, y)
@@ -552,6 +559,49 @@ export function ExportDialog({ isOpen, onClose }: ExportDialogProps) {
       margin: { left: margin, right: margin },
     })
 
+    // Section transferts inter-projets
+    const transfers = options?.transfers
+    const hasTransfers = transfers && (transfers.outgoing.length > 0 || transfers.incoming.length > 0)
+    if (hasTransfers) {
+      let tY = (doc as any).lastAutoTable?.finalY ?? chartY + 20
+      if (tY + 80 > pageHeight - margin) { doc.addPage(); tY = margin }
+      tY += 20
+      doc.setFontSize(12)
+      doc.setFont("helvetica", "bold")
+      doc.setTextColor(20, 20, 20)
+      doc.text("Partage de budget inter-projets", margin, tY)
+      tY += 8
+
+      const transferRows: string[][] = []
+      for (const t of transfers.incoming) {
+        const amt = effectiveCurrency === 'CFA' ? t.amount_cfa : effectiveCurrency === 'USD' ? t.amount_usd : t.amount_eur
+        transferRows.push([`← Reçu de`, sanitizeText(t.source_name || `Projet #${t.source_project_id}`), `+${formatAmountPdf(Number(amt), projectCurrency)} ${currencySymbol}`, sanitizeText(t.note || ''), t.created_at ? formatDate(t.created_at) : ''])
+      }
+      for (const t of transfers.outgoing) {
+        const amt = effectiveCurrency === 'CFA' ? t.amount_cfa : effectiveCurrency === 'USD' ? t.amount_usd : t.amount_eur
+        transferRows.push([`→ Prêté à`, sanitizeText(t.target_name || `Projet #${t.target_project_id}`), `−${formatAmountPdf(Number(amt), projectCurrency)} ${currencySymbol}`, sanitizeText(t.note || ''), t.created_at ? formatDate(t.created_at) : ''])
+      }
+      if (options?.effectiveBudget != null) {
+        transferRows.push(['', 'BUDGET EFFECTIF', `${formatAmountPdf(options.effectiveBudget, projectCurrency)} ${currencySymbol}`, '', ''])
+      }
+      autoTable(doc, {
+        startY: tY + 4,
+        head: [['Direction', 'Projet lié', 'Montant', 'Note', 'Date']],
+        body: transferRows,
+        styles: { fontSize: 9 },
+        headStyles: { fillColor: [80, 120, 200] },
+        didParseCell: (data: any) => {
+          if (data.section !== 'body') return
+          const row = transferRows[data.row.index]
+          if (row?.[0]?.startsWith('←')) data.cell.styles.textColor = [22, 163, 74]
+          else if (row?.[0]?.startsWith('→')) data.cell.styles.textColor = [234, 88, 12]
+          else if (row?.[1] === 'BUDGET EFFECTIF') data.cell.styles.fontStyle = 'bold'
+        },
+        theme: 'striped',
+        margin: { left: margin, right: margin },
+      })
+    }
+
     const blob = doc.output("blob") as Blob
     download(blob, `expenshare-rapport-${new Date().toISOString().slice(0, 10)}.pdf`)
   }
@@ -625,9 +675,32 @@ export function ExportDialog({ isOpen, onClose }: ExportDialogProps) {
           }
         }
 
+        // Récupérer les transferts inter-projets
+        let transfersData: { outgoing: any[]; incoming: any[] } | undefined
+        let effectiveBudget: number | undefined
+        try {
+          const dbAny = db as any
+          if (typeof dbAny.getProjectBudgetTransfers === 'function') {
+            transfersData = await dbAny.getProjectBudgetTransfers(Number(selectedProjectId))
+            const budgetTx = transactions.filter(t => t.type === 'budget')
+            const ownBudget = budgetTx.reduce((s, t) => s + (txNativeAmount(t) || 0), 0)
+            const totalIn = (transfersData?.incoming || []).reduce((s: number, t: any) => {
+              const amt = effectiveCurrency === 'CFA' ? t.amount_cfa : effectiveCurrency === 'USD' ? t.amount_usd : t.amount_eur
+              return s + Number(amt || 0)
+            }, 0)
+            const totalOut = (transfersData?.outgoing || []).reduce((s: number, t: any) => {
+              const amt = effectiveCurrency === 'CFA' ? t.amount_cfa : effectiveCurrency === 'USD' ? t.amount_usd : t.amount_eur
+              return s + Number(amt || 0)
+            }, 0)
+            effectiveBudget = ownBudget + totalIn - totalOut
+          }
+        } catch { transfersData = undefined }
+
         exportAsPdf(transactions, {
           project: projectDetails ?? undefined,
           members,
+          transfers: transfersData,
+          effectiveBudget,
         })
       }
 
@@ -640,6 +713,68 @@ export function ExportDialog({ isOpen, onClose }: ExportDialogProps) {
     }
   }
 
+  const formContent = (
+    <div className="space-y-6">
+      <div className="space-y-2">
+        <Label>Projet</Label>
+        <Select value={selectedProjectId} onValueChange={setSelectedProjectId}>
+          <SelectTrigger>
+            <SelectValue placeholder="Sélectionner un projet" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Tous mes projets</SelectItem>
+            {projects.map((project) => (
+              <SelectItem key={project.id} value={String(project.id)}>
+                {project.icon} {project.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="space-y-2">
+        <Label>Types d’export</Label>
+        <div className="flex items-center gap-4">
+          <label className="flex items-center gap-2 text-sm">
+            <Checkbox checked={exportCsv} onCheckedChange={(value) => setExportCsv(!!value)} />
+            CSV
+          </label>
+          <label className="flex items-center gap-2 text-sm">
+            <Checkbox checked={exportPdf} disabled={selectedProjectId === "all"} onCheckedChange={(value) => setExportPdf(!!value)} />
+            PDF{selectedProjectId === "all" ? " — non disponible pour tous les projets" : ""}
+          </label>
+        </div>
+      </div>
+
+      <p className="text-xs text-muted-foreground">
+        {selectedProjectId === "all"
+          ? "CSV: les montants sont dans la devise propre à chaque projet (colonne Devise incluse)."
+          : `Montants exportés dans la devise du projet (${currencySymbol}).`}
+      </p>
+
+      <div className="flex justify-end gap-3 pt-2">
+        <Button variant="outline" onClick={onClose} disabled={busy}>
+          {mode !== "modal" ? "Retour" : "Annuler"}
+        </Button>
+        <Button onClick={handleExport} disabled={busy}>
+          {busy ? "Génération…" : "Exporter"}
+        </Button>
+      </div>
+    </div>
+  )
+
+  if (mode !== "modal") {
+    return (
+      <div className="p-4 md:p-8 max-w-lg mx-auto space-y-6">
+        <div>
+          <h2 className="text-2xl font-bold">Exporter les données</h2>
+          <p className="text-sm text-muted-foreground mt-1">Choisissez le projet et le format d’export.</p>
+        </div>
+        {formContent}
+      </div>
+    )
+  }
+
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="sm:max-w-lg">
@@ -649,54 +784,7 @@ export function ExportDialog({ isOpen, onClose }: ExportDialogProps) {
             Choisissez le projet et le type d’export à générer.
           </DialogDescription>
         </DialogHeader>
-
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <Label>Projet</Label>
-            <Select value={selectedProjectId} onValueChange={setSelectedProjectId}>
-              <SelectTrigger>
-                <SelectValue placeholder="Sélectionner un projet" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Tous mes projets</SelectItem>
-                {projects.map((project) => (
-                  <SelectItem key={project.id} value={String(project.id)}>
-                    {project.icon} {project.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="space-y-2">
-            <Label>Types d’export</Label>
-            <div className="flex items-center gap-4">
-              <label className="flex items-center gap-2 text-sm">
-                <Checkbox checked={exportCsv} onCheckedChange={(value) => setExportCsv(!!value)} />
-                CSV
-              </label>
-              <label className="flex items-center gap-2 text-sm">
-                <Checkbox checked={exportPdf} disabled={selectedProjectId === "all"} onCheckedChange={(value) => setExportPdf(!!value)} />
-                PDF{selectedProjectId === "all" ? " — non disponible pour tous les projets" : ""}
-              </label>
-            </div>
-          </div>
-
-          <p className="text-xs text-muted-foreground">
-            {selectedProjectId === "all"
-              ? "CSV: les montants sont dans la devise propre à chaque projet (colonne Devise incluse)."
-              : `Montants exportés dans la devise du projet (${currencySymbol}).`}
-          </p>
-        </div>
-
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose} disabled={busy}>
-            Annuler
-          </Button>
-          <Button onClick={handleExport} disabled={busy}>
-            {busy ? "Génération…" : "Exporter"}
-          </Button>
-        </DialogFooter>
+        {formContent}
       </DialogContent>
     </Dialog>
   )

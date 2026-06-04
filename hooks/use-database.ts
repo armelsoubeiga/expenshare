@@ -1,13 +1,13 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import type { SupabaseDatabaseInstance } from "@/lib/database-supabase"
+import type { TursoDatabaseInstance } from "@/lib/database-turso"
 import type { CurrencyCode, ProjectWithId, Transaction } from "@/lib/types"
 // L'import dynamique ci-dessous garantit que nous récupérons bien l'instance
 // (export nommé ou par défaut) sans souci d'ordre de chargement.
 
 type UseDatabaseResult = {
-  db: SupabaseDatabaseInstance | null
+  db: TursoDatabaseInstance | null
   isReady: boolean
   isLoading: boolean
   error: string | null
@@ -17,7 +17,7 @@ export function useDatabase(): UseDatabaseResult {
   const [isReady, setIsReady] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [dbRef, setDbRef] = useState<SupabaseDatabaseInstance | null>(null)
+  const [dbRef, setDbRef] = useState<TursoDatabaseInstance | null>(null)
 
   const initializeDb = useCallback(async () => {
     try {
@@ -154,9 +154,7 @@ export function useUserProjects(userId: string | number | null | undefined): Use
 
     try {
       const userProjects = await db.getUserProjects(normalizedUserId)
-      const normalizedProjects = (userProjects ?? []).filter((project): project is ProjectWithId =>
-        project?.id != null,
-      )
+      const normalizedProjects = ((userProjects ?? []) as unknown as ProjectWithId[]).filter(p => p?.id != null)
       setProjects(normalizedProjects)
     } catch (error) {
       console.error("Failed to load user projects:", error)

@@ -134,14 +134,14 @@ export function HierarchicalPieChart({ data, onCategoryClick, currency = "EUR" }
       </div>
 
       {/* Pie Chart */}
-      <ResponsiveContainer width="100%" height={300}>
+      <ResponsiveContainer width="100%" height={220}>
         <PieChart>
           <Pie
             data={currentLevel}
             cx="50%"
             cy="50%"
-            outerRadius={120}
-            innerRadius={40}
+            outerRadius={90}
+            innerRadius={30}
             fill="#8884d8"
             dataKey="value"
             onClick={handleSliceClick}
@@ -161,7 +161,7 @@ export function HierarchicalPieChart({ data, onCategoryClick, currency = "EUR" }
       </ResponsiveContainer>
 
       {/* Legend */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-48 overflow-y-auto pr-1">
         {currentLevel.map((entry, index) => {
           // Affiche parent/nom si parentName existe
           const label = entry.parentName ? `${entry.parentName}/${entry.name}` : entry.name

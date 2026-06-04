@@ -1,6 +1,6 @@
 "use client"
 
-import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from "recharts"
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts"
 
 interface PieChartDatum {
   name: string
@@ -22,16 +22,6 @@ interface CustomPieChartProps {
   currency?: "EUR" | "USD" | "XOF"
 }
 
-type PieLabelProps = {
-  cx?: number
-  cy?: number
-  midAngle?: number
-  innerRadius?: number
-  outerRadius?: number
-  percent?: number
-  payload?: ExtendedPieChartDatum
-}
-
 type PieTooltipPayload = {
   name: string
   value: number
@@ -44,51 +34,16 @@ type PieTooltipProps = {
 }
 
 export function CustomPieChart({ data, title, centerLabel, centerValue, size = 200, currency = "EUR" }: CustomPieChartProps) {
-  // Quand beaucoup d'éléments, on limite la légende et on active le scroll
-  const tooManyLegendItems = (data?.length ?? 0) > 12
-  const containerHeight = size + (tooManyLegendItems ? 120 : 80)
-  // Affichage label catégorie/sous-catégorie
-  const renderCustomizedLabel = ({ cx = 0, cy = 0, midAngle = 0, outerRadius = 0, percent = 0, payload }: PieLabelProps) => {
-    if (!payload || percent < 0.08) return null // Don't show labels for slices < 8%
-
-    const RADIAN = Math.PI / 180
-    const radius = outerRadius + 20 // Position labels outside the pie
-    const x = cx + radius * Math.cos(-midAngle * RADIAN)
-    const y = cy + radius * Math.sin(-midAngle * RADIAN)
-    // Ajoute parent/category si présent
-    const label = payload.parent ? `${payload.parent}/${payload.name}` : payload.name
-    return (
-      <text
-        x={x}
-        y={y}
-        fill="currentColor"
-        textAnchor={x > cx ? "start" : "end"}
-        dominantBaseline="central"
-        fontSize="11"
-        fontWeight="500"
-        className="fill-foreground"
-      >
-        {`${label} (${(percent * 100).toFixed(0)}%)`}
-      </text>
-    )
-  }
-
   const renderTooltipContent = ({ active, payload }: PieTooltipProps) => {
     if (active && payload && payload.length) {
       const datum = payload[0]
-      if (!datum?.payload) {
-        return null
-      }
-      // Ajoute parent/category si présent
+      if (!datum?.payload) return null
       const label = datum.payload.parent ? `${datum.payload.parent}/${datum.name}` : datum.name
       return (
-        <div className="bg-background border border-border rounded-lg p-3 shadow-lg">
-          <p className="font-medium">{label}</p>
+        <div className="bg-background border border-border rounded-lg p-3 shadow-lg max-w-[200px]">
+          <p className="font-medium text-sm leading-tight">{label}</p>
           <p className="text-sm text-muted-foreground">
-            {new Intl.NumberFormat("fr-FR", {
-              style: "currency",
-              currency,
-            }).format(datum.value)}
+            {new Intl.NumberFormat("fr-FR", { style: "currency", currency }).format(datum.value)}
           </p>
           <p className="text-xs text-muted-foreground">
             {((datum.value / datum.payload.total) * 100).toFixed(1)}% du total
@@ -103,7 +58,7 @@ export function CustomPieChart({ data, title, centerLabel, centerValue, size = 2
     return (
       <div className="flex items-center justify-center h-48 text-muted-foreground">
         <div className="text-center">
-          <div className="w-16 h-16 rounded-full border-4 border-dashed border-muted-foreground/30 mx-auto mb-2"></div>
+          <div className="w-16 h-16 rounded-full border-4 border-dashed border-muted-foreground/30 mx-auto mb-2" />
           <p className="text-sm">Aucune donnée</p>
         </div>
       </div>
@@ -111,22 +66,22 @@ export function CustomPieChart({ data, title, centerLabel, centerValue, size = 2
   }
 
   const total = data.reduce((sum, item) => sum + item.value, 0)
-  const dataWithTotal: ExtendedPieChartDatum[] = data.map((item) => ({ ...item, total }))
+  const dataWithTotal: ExtendedPieChartDatum[] = data.map(item => ({ ...item, total }))
+  const radius = Math.max(60, size / 2.5)
 
   return (
     <div className="w-full">
-      <h3 className="text-lg font-semibold text-center mb-4">{title}</h3>
-      <ResponsiveContainer width="100%" height={containerHeight}>
-        <PieChart margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
+      <h3 className="text-base font-semibold text-center mb-3">{title}</h3>
+
+      {/* Pie — pas de labels externes (overlapping sur mobile) */}
+      <ResponsiveContainer width="100%" height={radius * 2 + 24}>
+        <PieChart margin={{ top: 4, right: 4, bottom: 4, left: 4 }}>
           <Pie
             data={dataWithTotal}
             cx="50%"
             cy="50%"
-            labelLine={false}
-            label={renderCustomizedLabel}
-            outerRadius={size / 2.5}
+            outerRadius={radius}
             innerRadius={0}
-            fill="#8884d8"
             dataKey="value"
             stroke="white"
             strokeWidth={2}
@@ -136,24 +91,24 @@ export function CustomPieChart({ data, title, centerLabel, centerValue, size = 2
             ))}
           </Pie>
           <Tooltip content={renderTooltipContent} />
-          <Legend
-            verticalAlign="bottom"
-            align="center"
-            layout="horizontal"
-            height={36}
-            wrapperStyle={{
-              maxHeight: tooManyLegendItems ? 88 : undefined,
-              overflowY: tooManyLegendItems ? 'auto' : undefined,
-              paddingTop: 8,
-            }}
-            formatter={(value: string, entry) => (
-              <span style={{ color: entry && typeof entry === "object" ? (entry as { color?: string }).color : undefined }} className="text-xs sm:text-sm font-medium">
-                {value}
-              </span>
-            )}
-          />
         </PieChart>
       </ResponsiveContainer>
+
+      {/* Légende manuelle : grille responsive, texte tronqué */}
+      <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5 max-h-48 overflow-y-auto pr-1">
+        {dataWithTotal.map((entry, idx) => {
+          const pct = total > 0 ? ((entry.value / total) * 100).toFixed(0) : '0'
+          const label = entry.parent ? `${entry.parent}/${entry.name}` : entry.name
+          return (
+            <div key={idx} className="flex items-center gap-2 min-w-0">
+              <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: entry.color }} />
+              <span className="text-xs text-muted-foreground truncate flex-1" title={label}>{label}</span>
+              <span className="text-xs font-medium flex-shrink-0">{pct}%</span>
+            </div>
+          )
+        })}
+      </div>
+
       {centerLabel && centerValue && (
         <div className="text-center mt-2">
           <p className="text-sm text-muted-foreground">{centerLabel}</p>

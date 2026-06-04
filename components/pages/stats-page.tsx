@@ -3,36 +3,55 @@
 import { useState, useEffect, useMemo, useCallback } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { BarChart3, TrendingUp, TrendingDown, DollarSign, FileText, Image as ImageIcon, Music, File } from "lucide-react"
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { BarChart3, TrendingUp, TrendingDown, DollarSign, ArrowRight, ArrowLeft, Link2, Filter, X } from "lucide-react"
 import { useUserProjects, useProjectStats } from "@/hooks/use-database"
-import { formatDate, normalizeCurrencyCode } from "@/lib/utils"
+import { normalizeCurrencyCode } from "@/lib/utils"
 import { CustomPieChart } from "@/components/charts/pie-chart"
 import { HierarchicalPieChart } from "@/components/charts/hierarchical-pie-chart"
 import { db } from "@/lib/database"
-import NextImage from "next/image"
 import type { CurrencyCode } from "@/lib/types"
+import { useNavigation } from "@/lib/navigation-context"
+import { TransactionTable } from "@/components/ui/transaction-table"
 
 export function StatsPage() {
+  const { navigate } = useNavigation()
   const [selectedProjectId, setSelectedProjectId] = useState<string>("")
   const [userId, setUserId] = useState<number | null>(null)
+  const [currentUserId, setCurrentUserId] = useState<string>("")
+  const [ownedProjectIds, setOwnedProjectIds] = useState<Set<number>>(new Set())
   const [categoryHierarchy, setCategoryHierarchy] = useState<any[]>([])
-  const [preview, setPreview] = useState<{ type: 'image'|'audio'|'text'; content: string; title: string } | null>(null)
   // Devise projet + taux
   const [displayCurrency, setDisplayCurrency] = useState<CurrencyCode>("EUR")
   const [eurToCfa, setEurToCfa] = useState<number>(655.957)
   const [eurToUsd, setEurToUsd] = useState<number>(1.0)
+  // Transferts de budget
+  const [transfers, setTransfers] = useState<{ outgoing: any[]; incoming: any[] }>({ outgoing: [], incoming: [] })
+  // Filtres transactions
+  const [showFilters, setShowFilters] = useState(false)
+  const [filterDate, setFilterDate] = useState<'all' | 'today' | 'week' | 'month'>('all')
+  const [filterUserId, setFilterUserId] = useState<string>('all')
+  const [filterType, setFilterType] = useState<'all' | 'expense' | 'budget'>('all')
+  const [activeStatsTab, setActiveStatsTab] = useState<'overview' | 'categories' | 'transactions'>('overview')
 
-  // Get user ID
+  // Get user ID + owned projects
   useEffect(() => {
     const storedUser = localStorage.getItem("expenshare_user")
-    if (storedUser) {
-      const userData = JSON.parse(storedUser)
-      setUserId(userData.id)
-    }
+    if (!storedUser) return
+    const userData = JSON.parse(storedUser)
+    setUserId(userData.id)
+    setCurrentUserId(String(userData.id))
+    // Charger les projets dont l'utilisateur est propriétaire
+    ;(async () => {
+      try {
+        const projs = await (db as any).getUserProjects(userData.id)
+        const owned = new Set<number>()
+        for (const p of (projs as any[])) {
+          if (String(p.created_by) === String(userData.id) && p.id != null) owned.add(Number(p.id))
+        }
+        setOwnedProjectIds(owned)
+      } catch {}
+    })()
   }, [])
 
   const { projects, isLoading: projectsLoading } = useUserProjects(userId)
@@ -44,6 +63,11 @@ export function StatsPage() {
       setSelectedProjectId(projects[0].id.toString())
     }
   }, [projectsLoading, projects, selectedProjectId])
+
+  // Réinitialiser les filtres liés à l'utilisateur quand le projet change
+  useEffect(() => {
+    setFilterUserId('all')
+  }, [selectedProjectId])
   const loadCategoryHierarchy = useCallback(
     async (projectId: number) => {
       try {
@@ -75,6 +99,21 @@ export function StatsPage() {
       console.error("Failed to load project currency:", error)
     }
   }, [])
+
+  // Charger les transferts quand le projet change
+  useEffect(() => {
+    if (!selectedProjectId) { setTransfers({ outgoing: [], incoming: [] }); return }
+    const loadTransfers = async () => {
+      try {
+        const t = await (db as any).getProjectBudgetTransfers(Number(selectedProjectId))
+        setTransfers(t || { outgoing: [], incoming: [] })
+      } catch { setTransfers({ outgoing: [], incoming: [] }) }
+    }
+    void loadTransfers()
+    const onUpdated = () => void loadTransfers()
+    window.addEventListener('expenshare:project-updated', onUpdated)
+    return () => window.removeEventListener('expenshare:project-updated', onUpdated)
+  }, [selectedProjectId])
 
   // Load category hierarchy when project changes
   useEffect(() => {
@@ -147,11 +186,44 @@ export function StatsPage() {
     return "text-gray-600"
   }
 
-  const getTransactionBgColor = (type: string) => {
-    return type === "expense" ? "bg-red-50 dark:bg-red-950/20" : "bg-blue-50 dark:bg-blue-950/20"
-  }
-
   const selectedProject = projects.find((p) => p.id.toString() === selectedProjectId)
+
+  // Utilisateurs distincts présents dans les transactions du projet (pour filtre)
+  const txUsers = useMemo(() => {
+    if (!stats?.transactions) return [] as { id: string; name: string }[]
+    const map = new Map<string, string>()
+    for (const tx of stats.transactions) {
+      if (tx.user_id != null && tx.user_name) map.set(String(tx.user_id), String(tx.user_name))
+    }
+    return Array.from(map.entries()).map(([id, name]) => ({ id, name }))
+  }, [stats?.transactions])
+
+  // Transactions filtrées
+  const filteredTransactions = useMemo(() => {
+    let txs = stats?.transactions ?? []
+
+    if (filterDate !== 'all') {
+      const now = new Date()
+      let cutoff: Date
+      if (filterDate === 'today') {
+        cutoff = new Date(now); cutoff.setHours(0, 0, 0, 0)
+      } else if (filterDate === 'week') {
+        cutoff = new Date(now); cutoff.setHours(0, 0, 0, 0)
+        const day = cutoff.getDay()
+        cutoff.setDate(cutoff.getDate() - (day === 0 ? 6 : day - 1))
+      } else {
+        cutoff = new Date(now.getFullYear(), now.getMonth(), 1)
+      }
+      txs = txs.filter(tx => tx.created_at && new Date(tx.created_at) >= cutoff)
+    }
+
+    if (filterUserId !== 'all') txs = txs.filter(tx => String(tx.user_id) === filterUserId)
+    if (filterType !== 'all') txs = txs.filter(tx => tx.type === filterType)
+
+    return txs
+  }, [stats?.transactions, filterDate, filterUserId, filterType])
+
+  const activeFiltersCount = (filterDate !== 'all' ? 1 : 0) + (filterUserId !== 'all' ? 1 : 0) + (filterType !== 'all' ? 1 : 0)
 
   // Données 'Répartition des Budgets' basées sur les transactions de type budget, étiquetées par titre
   const budgetsPieData = useMemo(() => {
@@ -195,7 +267,7 @@ export function StatsPage() {
     return (
       <div className="p-4 space-y-6">
         <div className="space-y-2">
-          <h2 className="text-2xl font-bold text-foreground">Statistiques</h2>
+          <h2 className="text-2xl font-bold text-foreground">Projets</h2>
           <p className="text-muted-foreground">Analyses détaillées par projet</p>
         </div>
 
@@ -211,21 +283,16 @@ export function StatsPage() {
   }
 
   return (
-    <div className="p-4 space-y-6">
-      <div className="space-y-2">
-        <h2 className="text-2xl font-bold text-foreground">Statistiques</h2>
-        <p className="text-muted-foreground">Analyses détaillées par projet</p>
-      </div>
-
-      {/* Project Selection */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Sélection du Projet</CardTitle>
-          <CardDescription>Choisissez un projet pour voir ses statistiques détaillées</CardDescription>
-        </CardHeader>
-        <CardContent>
+    <div className="p-3 md:p-4 space-y-4 md:space-y-6">
+      {/* Header + sélecteur projet sur une ligne */}
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+        <div className="flex-1 min-w-0">
+          <h2 className="text-xl md:text-2xl font-bold text-foreground">Projets</h2>
+          <p className="text-sm text-muted-foreground hidden sm:block">Analyses détaillées par projet</p>
+        </div>
+        <div className="w-full sm:w-64 flex-shrink-0">
           <Select value={selectedProjectId} onValueChange={setSelectedProjectId}>
-            <SelectTrigger>
+            <SelectTrigger className="h-9">
               <SelectValue placeholder="Sélectionnez un projet" />
             </SelectTrigger>
             <SelectContent>
@@ -233,72 +300,162 @@ export function StatsPage() {
                 <SelectItem key={project.id} value={project.id.toString()}>
                   <div className="flex items-center gap-2">
                     <span>{project.icon}</span>
-                    <span>{project.name}</span>
-                    <Badge variant="outline" className="ml-2">
-                      {project.role}
-                    </Badge>
+                    <span className="truncate max-w-[140px]">{project.name}</span>
                   </div>
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
       {/* Project Statistics */}
       {selectedProjectId && (
         <>
-          {/* Project Indicators */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Card className="bg-red-50 dark:bg-red-950/20">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Total Dépenses</CardTitle>
-                <TrendingDown className="h-4 w-4 text-red-500" />
+          {/* Project Indicators — scroll horizontal sur mobile */}
+          <div className="flex gap-3 overflow-x-auto pb-1 md:grid md:grid-cols-3 md:gap-4 -mx-3 px-3 md:mx-0 md:px-0">
+            <Card className="bg-red-50 dark:bg-red-950/20 flex-shrink-0 w-48 md:w-auto">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 p-3 md:p-4">
+                <CardTitle className="text-xs md:text-sm font-medium">Dépenses</CardTitle>
+                <TrendingDown className="h-4 w-4 text-red-500 flex-shrink-0" />
               </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-red-600">
+              <CardContent className="p-3 md:p-4 pt-0">
+                <div className="text-lg md:text-2xl font-bold text-red-600 leading-tight">
                   {statsLoading ? "..." : formatAmount(stats.totalExpenses)}
                 </div>
-                <p className="text-xs text-muted-foreground">{selectedProject?.name}</p>
+                <p className="text-xs text-muted-foreground truncate mt-0.5">{selectedProject?.name}</p>
               </CardContent>
             </Card>
 
-            <Card className="bg-blue-50 dark:bg-blue-950/20">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Total Budgets</CardTitle>
-                <TrendingUp className="h-4 w-4 text-blue-500" />
+            <Card className="bg-blue-50 dark:bg-blue-950/20 flex-shrink-0 w-48 md:w-auto">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 p-3 md:p-4">
+                <CardTitle className="text-xs md:text-sm font-medium">Budgets</CardTitle>
+                <TrendingUp className="h-4 w-4 text-blue-500 flex-shrink-0" />
               </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-blue-600">
+              <CardContent className="p-3 md:p-4 pt-0">
+                <div className="text-lg md:text-2xl font-bold text-blue-600 leading-tight">
                   {statsLoading ? "..." : formatAmount(stats.totalBudgets)}
                 </div>
-                <p className="text-xs text-muted-foreground">Fonds disponibles</p>
+                <p className="text-xs text-muted-foreground mt-0.5">Fonds disponibles</p>
               </CardContent>
             </Card>
 
-            <Card className={stats.balance >= 0 ? "bg-green-50 dark:bg-green-950/20" : "bg-red-50 dark:bg-red-950/20"}>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Solde</CardTitle>
-                <DollarSign className={`h-4 w-4 ${stats.balance >= 0 ? "text-green-500" : "text-red-500"}`} />
+            <Card className={`flex-shrink-0 w-48 md:w-auto ${stats.balance >= 0 ? "bg-green-50 dark:bg-green-950/20" : "bg-red-50 dark:bg-red-950/20"}`}>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 p-3 md:p-4">
+                <CardTitle className="text-xs md:text-sm font-medium">Solde</CardTitle>
+                <DollarSign className={`h-4 w-4 flex-shrink-0 ${stats.balance >= 0 ? "text-green-500" : "text-red-500"}`} />
               </CardHeader>
-              <CardContent>
-                <div className={`text-2xl font-bold ${getBalanceColor(stats.balance)}`}>
+              <CardContent className="p-3 md:p-4 pt-0">
+                <div className={`text-lg md:text-2xl font-bold leading-tight ${getBalanceColor(stats.balance)}`}>
                   {statsLoading ? "..." : formatAmount(stats.balance)}
                 </div>
-                <p className="text-xs text-muted-foreground">Budget - Dépenses</p>
+                <p className="text-xs text-muted-foreground mt-0.5">Budget − Dépenses</p>
               </CardContent>
             </Card>
           </div>
 
-          {/* Charts and Analysis */}
-          <Tabs defaultValue="overview" className="space-y-4">
-            <TabsList className="grid w-full grid-cols-3">
-              <TabsTrigger value="overview">Vue d'ensemble</TabsTrigger>
-              <TabsTrigger value="categories">Catégories</TabsTrigger>
-              <TabsTrigger value="transactions">Transactions</TabsTrigger>
-            </TabsList>
+          {/* Section Transferts de budget inter-projets */}
+          {(() => {
+            const totalIn = transfers.incoming.reduce((s, t) => s + Number(displayCurrency === 'CFA' ? t.amount_cfa : displayCurrency === 'USD' ? t.amount_usd : t.amount_eur), 0)
+            const totalOut = transfers.outgoing.reduce((s, t) => s + Number(displayCurrency === 'CFA' ? t.amount_cfa : displayCurrency === 'USD' ? t.amount_usd : t.amount_eur), 0)
+            const effectiveBudget = stats.totalBudgets + totalIn - totalOut
+            const effectiveBalance = effectiveBudget - stats.totalExpenses
+            const hasTransfers = transfers.incoming.length > 0 || transfers.outgoing.length > 0
 
-            <TabsContent value="overview" className="space-y-4">
+            return (
+              <Card className={`border-2 ${hasTransfers ? 'border-dashed border-primary/40' : 'border-dashed border-border'}`}>
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Link2 className="h-4 w-4 text-primary" />
+                      <CardTitle className="text-sm">Partage de budget inter-projets</CardTitle>
+                    </div>
+                    <button
+                      onClick={() => navigate({ type: 'project-transfers', projectId: Number(selectedProjectId) })}
+                      className="text-xs font-medium text-primary hover:underline flex items-center gap-1"
+                    >
+                      Gérer
+                      <ArrowRight className="h-3 w-3" />
+                    </button>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  {!hasTransfers ? (
+                    <div className="flex items-center gap-3 py-2">
+                      <p className="text-sm text-muted-foreground">Aucun transfert enregistré. Vous pouvez lier ce projet à d'autres pour partager les budgets.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {/* Résumé des flux */}
+                      <div className="grid grid-cols-2 gap-3">
+                        {totalIn > 0 && (
+                          <div className="bg-green-50 dark:bg-green-950/20 rounded-xl p-3">
+                            <div className="flex items-center gap-1.5 mb-1">
+                              <ArrowLeft className="h-3.5 w-3.5 text-green-500" />
+                              <span className="text-xs text-green-700 dark:text-green-400 font-medium">Reçu d'autres projets</span>
+                            </div>
+                            <p className="text-base font-bold text-green-600">+{formatAmount(totalIn)}</p>
+                            <p className="text-xs text-muted-foreground mt-0.5">{transfers.incoming.map(t => t.source_name || `Projet ${t.source_project_id}`).join(', ')}</p>
+                          </div>
+                        )}
+                        {totalOut > 0 && (
+                          <div className="bg-orange-50 dark:bg-orange-950/20 rounded-xl p-3">
+                            <div className="flex items-center gap-1.5 mb-1">
+                              <ArrowRight className="h-3.5 w-3.5 text-orange-500" />
+                              <span className="text-xs text-orange-700 dark:text-orange-400 font-medium">Prêté à d'autres projets</span>
+                            </div>
+                            <p className="text-base font-bold text-orange-600">−{formatAmount(totalOut)}</p>
+                            <p className="text-xs text-muted-foreground mt-0.5">{transfers.outgoing.map(t => t.target_name || `Projet ${t.target_project_id}`).join(', ')}</p>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Budget effectif */}
+                      <div className="bg-muted rounded-xl p-3 flex items-center justify-between">
+                        <div>
+                          <p className="text-xs text-muted-foreground">Budget effectif</p>
+                          <p className="text-xs text-muted-foreground">= Budget propre {totalIn > 0 ? `+ Reçu` : ''}{totalOut > 0 ? ` − Prêté` : ''}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-base font-bold">{formatAmount(effectiveBudget)}</p>
+                          <p className={`text-xs font-medium ${effectiveBalance >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                            {effectiveBalance >= 0 ? 'Excédent' : 'Déficit'} : {formatAmount(Math.abs(effectiveBalance))}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )
+          })()}
+
+          {/* Charts and Analysis — onglets underline */}
+          <div className="space-y-4">
+            <div className="border-b border-border">
+              <div className="flex">
+                {([
+                  { id: "overview",     label: "Vue d'ensemble" },
+                  { id: "categories",   label: "Catégories" },
+                  { id: "transactions", label: "Transactions" },
+                ] as const).map(tab => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveStatsTab(tab.id)}
+                    className={`px-4 sm:px-6 py-3 text-xs sm:text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap ${
+                      activeStatsTab === tab.id
+                        ? "border-primary text-primary"
+                        : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* ── Vue d'ensemble ── */}
+            {activeStatsTab === "overview" && (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 {stats.expensesByCategory.length > 0 && (
                   <Card>
@@ -319,7 +476,6 @@ export function StatsPage() {
                     </CardContent>
                   </Card>
                 )}
-
                 {budgetsPieData.length > 0 && (
                   <Card>
                     <CardHeader>
@@ -337,9 +493,10 @@ export function StatsPage() {
                   </Card>
                 )}
               </div>
-            </TabsContent>
+            )}
 
-            <TabsContent value="categories" className="space-y-4">
+            {/* ── Catégories ── */}
+            {activeStatsTab === "categories" && (
               <Card>
                 <CardHeader>
                   <CardTitle>Analyse Hiérarchique des Catégories</CardTitle>
@@ -349,9 +506,7 @@ export function StatsPage() {
                   {categoryHierarchy.length > 0 ? (
                     <HierarchicalPieChart
                       data={mapHierarchyValues(categoryHierarchy)}
-                      onCategoryClick={(categoryId) => {
-                        console.log("Category clicked:", categoryId)
-                      }}
+                      onCategoryClick={(categoryId) => { console.log("Category clicked:", categoryId) }}
                       currency={currencyForIntl as any}
                     />
                   ) : (
@@ -362,159 +517,155 @@ export function StatsPage() {
                   )}
                 </CardContent>
               </Card>
-            </TabsContent>
+            )}
 
-            <TabsContent value="transactions" className="space-y-4">
+            {/* ── Transactions ── */}
+            {activeStatsTab === "transactions" && <div className="space-y-4">
               <Card>
-                <CardHeader>
-                  <CardTitle>Historique des Transactions</CardTitle>
-                  <CardDescription>Toutes les transactions de ce projet</CardDescription>
+                <CardHeader className="pb-0">
+                  <div className="flex items-center justify-between pb-3">
+                    <div>
+                      <CardTitle>Historique des Transactions</CardTitle>
+                      {activeFiltersCount > 0 && !showFilters && (
+                        <p className="text-xs text-primary mt-0.5">{filteredTransactions.length} / {stats.transactions.length} transactions</p>
+                      )}
+                      {activeFiltersCount === 0 && (
+                        <CardDescription>Toutes les transactions de ce projet</CardDescription>
+                      )}
+                    </div>
+                    {/* Bouton entonnoir */}
+                    <div className="relative">
+                      <button
+                        onClick={() => setShowFilters(v => !v)}
+                        className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium transition-all ${
+                          showFilters ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                        }`}
+                        title={showFilters ? 'Masquer les filtres' : 'Filtrer'}
+                      >
+                        <Filter className="h-4 w-4" />
+                        <span className="hidden sm:inline">Filtrer</span>
+                        {activeFiltersCount > 0 && !showFilters && (
+                          <span className="w-4 h-4 bg-primary text-primary-foreground text-[10px] font-bold rounded-full flex items-center justify-center">
+                            {activeFiltersCount}
+                          </span>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Panneau filtres (masqué par défaut) */}
+                  {showFilters && (
+                    <div className="border-t border-border pt-3 pb-3 space-y-3">
+
+                      {/* Filtre date */}
+                      <div className="flex items-start sm:items-center gap-2">
+                        <span className="text-xs text-muted-foreground w-20 flex-shrink-0 pt-1.5 sm:pt-0">Période</span>
+                        <div className="flex gap-1.5 flex-wrap">
+                          {(['all', 'today', 'week', 'month'] as const).map(d => (
+                            <button
+                              key={d}
+                              onClick={() => setFilterDate(d)}
+                              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                                filterDate === d ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:text-foreground'
+                              }`}
+                            >
+                              {d === 'all' ? 'Tout' : d === 'today' ? "Aujourd'hui" : d === 'week' ? 'Cette semaine' : 'Ce mois'}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Filtre utilisateur (seulement si plusieurs users) */}
+                      {txUsers.length > 1 && (
+                        <div className="flex items-start sm:items-center gap-2">
+                          <span className="text-xs text-muted-foreground w-20 flex-shrink-0 pt-1.5 sm:pt-0">Utilisateur</span>
+                          <div className="flex gap-1.5 flex-wrap">
+                            <button
+                              onClick={() => setFilterUserId('all')}
+                              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${filterUserId === 'all' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:text-foreground'}`}
+                            >
+                              Tous
+                            </button>
+                            {txUsers.map(u => (
+                              <button
+                                key={u.id}
+                                onClick={() => setFilterUserId(u.id)}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${filterUserId === u.id ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:text-foreground'}`}
+                              >
+                                {u.name}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Filtre type */}
+                      <div className="flex items-start sm:items-center gap-2">
+                        <span className="text-xs text-muted-foreground w-20 flex-shrink-0 pt-1.5 sm:pt-0">Type</span>
+                        <div className="flex gap-1.5">
+                          {(['all', 'expense', 'budget'] as const).map(t => (
+                            <button
+                              key={t}
+                              onClick={() => setFilterType(t)}
+                              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                                filterType === t
+                                  ? t === 'expense' ? 'bg-red-500 text-white'
+                                  : t === 'budget' ? 'bg-blue-500 text-white'
+                                  : 'bg-primary text-primary-foreground'
+                                  : 'bg-muted text-muted-foreground hover:text-foreground'
+                              }`}
+                            >
+                              {t === 'all' ? 'Tout' : t === 'expense' ? 'Dépense' : 'Budget'}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Résultat + réinitialisation */}
+                      <div className="flex items-center justify-between pt-1">
+                        <p className="text-xs text-muted-foreground">
+                          {filteredTransactions.length} résultat{filteredTransactions.length > 1 ? 's' : ''} sur {stats.transactions.length}
+                        </p>
+                        {activeFiltersCount > 0 && (
+                          <button
+                            onClick={() => { setFilterDate('all'); setFilterUserId('all'); setFilterType('all') }}
+                            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                          >
+                            <X className="h-3 w-3" />
+                            Réinitialiser
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </CardHeader>
+
                 <CardContent>
                   {statsLoading ? (
                     <div className="text-center py-8">
-                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
-                    </div>
-                  ) : stats.transactions.length === 0 ? (
-                    <div className="text-center py-8 text-muted-foreground">
-                      <p>Aucune transaction pour ce projet</p>
-                      <p className="text-sm">Ajoutez des dépenses ou budgets pour voir l'historique</p>
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto" />
                     </div>
                   ) : (
-                    <div className="overflow-x-auto">
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>Type</TableHead>
-                            <TableHead>Titre</TableHead>
-                            <TableHead>Catégorie</TableHead>
-                            <TableHead>Sous-catégorie</TableHead>
-                            <TableHead>Montant</TableHead>
-                            <TableHead>Utilisateur</TableHead>
-                            <TableHead>Note</TableHead>
-                            <TableHead>Date</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {stats.transactions.map((transaction) => (
-                            <TableRow key={transaction.id} className={getTransactionBgColor(transaction.type)}>
-                              <TableCell>
-                                <Badge variant={transaction.type === "expense" ? "destructive" : "default"}>
-                                  {transaction.type === "expense" ? "Dépense" : "Budget"}
-                                </Badge>
-                              </TableCell>
-                              <TableCell className="font-medium">
-                                {transaction.parent_category_name && transaction.category_name
-                                  ? `${transaction.parent_category_name}/${transaction.category_name}`
-                                  : (transaction.category_name || transaction.title || '—')}
-                              </TableCell>
-                              <TableCell>
-                                {transaction.type === 'budget'
-                                  ? '-'
-                                  : (transaction.parent_category_name || transaction.category_name || '-')}
-                              </TableCell>
-                              <TableCell>
-                                {transaction.type === 'budget'
-                                  ? '-'
-                                  : (transaction.parent_category_name ? transaction.category_name : '')}
-                              </TableCell>
-                              <TableCell className="font-medium">
-                                {formatTransactionAmount(transaction)}
-                              </TableCell>
-                              <TableCell>{transaction.user_name}</TableCell>
-                              <TableCell>
-                                <div className="flex items-center gap-2">
-                                  {transaction.description && typeof transaction.description === 'string' && !/^data:.+;base64,/.test(transaction.description) && (
-                                    <button
-                                      className="p-1 hover:bg-muted rounded"
-                                      title="Voir la note"
-                                      onClick={() => setPreview({ type: 'text', content: String(transaction.description), title: 'Note' })}
-                                    >
-                                      <FileText className="h-4 w-4 text-muted-foreground" />
-                                    </button>
-                                  )}
-                                  {transaction.has_document && (
-                                    <button
-                                      className="p-1 hover:bg-muted rounded"
-                                      title="Voir le document"
-                                      onClick={async () => {
-                                        const notes = await db.getNotesByTransaction(transaction.id)
-                                        const doc = notes.find((n: any) => n.content_type === 'text' && n.file_path)
-                                        if (doc) {
-                                          const url = doc.content
-                                          if (typeof window !== 'undefined') window.open(url, '_blank')
-                                        }
-                                      }}
-                                    >
-                                      <File className="h-4 w-4 text-purple-600" />
-                                    </button>
-                                  )}
-                                  {transaction.has_image && (
-                                    <button
-                                      className="p-1 hover:bg-muted rounded"
-                                      title="Voir l'image"
-                                      onClick={async () => {
-                                        const notes = await db.getNotesByTransaction(transaction.id)
-                                        const img = notes.find((n: any) => n.content_type === 'image')
-                                        if (img) setPreview({ type: 'image', content: img.content, title: img.file_path || 'Image' })
-                                      }}
-                                    >
-                                      <ImageIcon className="h-4 w-4 text-blue-500" />
-                                    </button>
-                                  )}
-                                  {transaction.has_audio && (
-                                    <button
-                                      className="p-1 hover:bg-muted rounded"
-                                      title="Écouter l'audio"
-                                      onClick={async () => {
-                                        const notes = await db.getNotesByTransaction(transaction.id)
-                                        const audio = notes.find((n: any) => n.content_type === 'audio')
-                                        if (audio) setPreview({ type: 'audio', content: audio.content, title: audio.file_path || 'Audio' })
-                                      }}
-                                    >
-                                      <Music className="h-4 w-4 text-green-600" />
-                                    </button>
-                                  )}
-                                </div>
-                              </TableCell>
-                              <TableCell>{formatDate(transaction.created_at)}</TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </div>
+                    <TransactionTable
+                      transactions={filteredTransactions}
+                      formatAmount={formatTransactionAmount}
+                      showProject={false}
+                      emptyMessage={activeFiltersCount > 0 ? "Aucune transaction ne correspond aux filtres." : "Aucune transaction pour ce projet. Ajoutez des dépenses ou budgets."}
+                      currentUserId={currentUserId}
+                      ownedProjectIds={ownedProjectIds}
+                      onEdit={tx => tx.id && navigate({ type: 'edit-transaction', transactionId: tx.id })}
+                      onDelete={async tx => {
+                        if (!tx.id) return
+                        try { await (db as any).deleteTransaction(tx.id) } catch {}
+                      }}
+                    />
                   )}
                 </CardContent>
               </Card>
 
-              {/* Preview Dialog */}
-              <Dialog open={!!preview} onOpenChange={(open) => !open && setPreview(null)}>
-                <DialogContent className="sm:max-w-lg">
-                  <DialogHeader>
-                    <DialogTitle>{preview?.title || 'Aperçu'}</DialogTitle>
-                  </DialogHeader>
-                  {preview?.type === 'text' && (
-                    <div className="whitespace-pre-wrap text-sm">{preview.content}</div>
-                  )}
-                  {preview?.type === 'image' && (
-                    <div className="relative w-full h-80 max-h-[65vh]">
-                      <NextImage
-                        src={preview.content}
-                        alt={preview?.title ?? "Aperçu image"}
-                        fill
-                        className="object-contain rounded border"
-                        sizes="(max-width: 640px) 100vw, 512px"
-                        unoptimized
-                      />
-                    </div>
-                  )}
-                  {preview?.type === 'audio' && (
-                    <audio controls src={preview.content} className="w-full" />
-                  )}
-                </DialogContent>
-              </Dialog>
-            </TabsContent>
-          </Tabs>
+            </div>}
+
+          </div>
         </>
       )}
     </div>

@@ -61,12 +61,13 @@ export interface Transaction {
   has_document?: boolean
   has_image?: boolean
   has_audio?: boolean
+  has_video?: boolean
 }
 
 export interface Note {
   id?: number
   transaction_id: number
-  content_type: "text" | "image" | "audio"
+  content_type: "text" | "image" | "audio" | "video"
   content: string
   file_path?: string
   created_at?: Date | string

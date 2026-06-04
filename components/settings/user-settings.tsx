@@ -8,7 +8,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Loader2, Trash2, ArrowLeft } from "lucide-react"
 import { useDatabase } from "@/hooks/use-database"
-import type { SupabaseDatabaseInstance } from "@/lib/database-supabase"
+import type { TursoDatabaseInstance } from "@/lib/database-turso"
 import type { CurrencyCode, ProjectWithId, User } from "@/lib/types"
 import { SUPPORTED_CURRENCIES } from "@/lib/types"
 import { CURRENCY_LABELS, normalizeCurrencyCode } from "@/lib/utils"
@@ -26,7 +26,7 @@ type ProjectListItem = ProjectWithId & {
 
 export function UserSettings({ isOpen, onClose }: UserSettingsProps) {
   const { db, isReady } = useDatabase()
-  const database = db as SupabaseDatabaseInstance | null
+  const database = db as TursoDatabaseInstance | null
   const [projects, setProjects] = useState<ProjectListItem[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [userId, setUserId] = useState<string | null>(null)

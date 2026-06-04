@@ -1,155 +1,107 @@
 "use client"
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Badge } from "@/components/ui/badge"
-import { TrendingUp, TrendingDown, DollarSign, FileText, Folder, Clock, Eye, EyeOff, Image as ImageIcon, Music, File } from "lucide-react"
 import { useEffect, useState } from "react"
-import NextImage from "next/image"
-import type { CurrencyCode, Transaction, Note } from "@/lib/types"
-import { normalizeCurrencyCode } from "@/lib/utils"
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { TrendingUp, TrendingDown, DollarSign, Folder, Clock, Eye, EyeOff, RefreshCw, Plus } from "lucide-react"
+import type { CurrencyCode, Transaction } from "@/lib/types"
+import { normalizeCurrencyCode, formatDateRelative } from "@/lib/utils"
 import { db } from "@/lib/database"
 import { useGlobalStats, useRecentTransactions } from "@/hooks/use-database"
-import { formatDateRelative } from "@/lib/utils"
 import { CustomPieChart } from "@/components/charts/pie-chart"
-import { Button } from "@/components/ui/button"
-// useState déjà importé en haut du fichier via "use client" (React hooks)
+import { TransactionTable } from "@/components/ui/transaction-table"
+import { useNavigation } from "@/lib/navigation-context"
+
+
+const CURRENCIES: CurrencyCode[] = ["EUR", "CFA", "USD"]
 
 export function HomePage() {
+  const { navigate } = useNavigation()
   const [showDetails, setShowDetails] = useState(true)
-  const [preview, setPreview] = useState<{ type: 'image'|'audio'|'text'; content: string; title: string } | null>(null)
   const [displayCurrency, setDisplayCurrency] = useState<CurrencyCode>("EUR")
-  const [eurToCfa, setEurToCfa] = useState<number>(655.957)
-  const [eurToUsd, setEurToUsd] = useState<number>(1.0)
+
   const { stats, isLoading: statsLoading, refetch: refetchStats } = useGlobalStats(displayCurrency)
-  const { transactions, isLoading: transactionsLoading, refetch: refetchTransactions } = useRecentTransactions(10)
+  const { transactions, isLoading: txLoading, refetch: refetchTx } = useRecentTransactions(10)
 
   useEffect(() => {
-    // Charger paramètres devise utilisateur
     const loadCurrency = async () => {
       try {
-        const storedUser = localStorage.getItem("expenshare_user")
-        if (!storedUser) return
-        const user = JSON.parse(storedUser)
-        // accès direct au module db pour lire settings
-        const settingCurrency = await db.settings.get(`user:${user.id}:currency`)
-        const settingCfa = await db.settings.get(`user:${user.id}:eur_to_cfa`)
-        const settingUsd = await db.settings.get(`user:${user.id}:eur_to_usd`)
-  const normalizedCurrency = normalizeCurrencyCode(settingCurrency?.value)
-  if (normalizedCurrency) setDisplayCurrency(normalizedCurrency)
-        if (settingCfa?.value && !Number.isNaN(Number(settingCfa.value))) setEurToCfa(Number(settingCfa.value))
-        if (settingUsd?.value && !Number.isNaN(Number(settingUsd.value))) setEurToUsd(Number(settingUsd.value))
-  // Rafraîchir les stats après chargement des préférences
-  refetchStats()
+        const stored = localStorage.getItem("expenshare_user")
+        if (!stored) return
+        const user = JSON.parse(stored)
+        const [cur, cfa, usd] = await Promise.all([
+          db.settings.get(`user:${user.id}:currency`),
+          db.settings.get(`user:${user.id}:eur_to_cfa`),
+          db.settings.get(`user:${user.id}:eur_to_usd`),
+        ])
+        const n = normalizeCurrencyCode(cur?.value)
+        if (n) setDisplayCurrency(n)
+        refetchStats()
       } catch {}
     }
     loadCurrency()
 
-    type CurrencyChangedDetail = {
-      currency?: string
-      eurToCfa?: number | string
-      eurToUsd?: number | string
-    }
-
     const onCurrencyChanged = (e: Event) => {
-      const ev = e as CustomEvent<CurrencyChangedDetail>
-      if (ev.detail) {
-        if (ev.detail.currency) {
-          const normalized = normalizeCurrencyCode(ev.detail.currency)
-          if (normalized) setDisplayCurrency(normalized)
-        }
-        if (ev.detail.eurToCfa != null && !Number.isNaN(Number(ev.detail.eurToCfa))) setEurToCfa(Number(ev.detail.eurToCfa))
-        if (ev.detail.eurToUsd != null && !Number.isNaN(Number(ev.detail.eurToUsd))) setEurToUsd(Number(ev.detail.eurToUsd))
-  // Recharger les stats à chaque changement de devise
-  refetchStats()
-      } else {
-        // Replis: relire depuis DB
-  loadCurrency()
-      }
-    }
-    window.addEventListener('expenshare:currency-changed', onCurrencyChanged)
-    
-    // Écouter les mises à jour de projets pour recharger les données
-    const onProjectUpdated = () => {
+      const ev = e as CustomEvent<{ currency?: string }>
+      if (ev.detail?.currency) { const n = normalizeCurrencyCode(ev.detail.currency); if (n) setDisplayCurrency(n) }
       refetchStats()
-      refetchTransactions()
     }
-    window.addEventListener('expenshare:project-updated', onProjectUpdated)
-    
+    const onUpdated = () => { refetchStats(); refetchTx() }
+
+    window.addEventListener('expenshare:currency-changed', onCurrencyChanged)
+    window.addEventListener('expenshare:project-updated', onUpdated)
     return () => {
       window.removeEventListener('expenshare:currency-changed', onCurrencyChanged)
-      window.removeEventListener('expenshare:project-updated', onProjectUpdated)
+      window.removeEventListener('expenshare:project-updated', onUpdated)
     }
-  }, [refetchStats, refetchTransactions])
+  }, [refetchStats, refetchTx])
 
-  const convertAmount = (amountEur: number) => {
-    switch (displayCurrency) {
-      case "CFA":
-        return amountEur * eurToCfa
-      case "USD":
-        return amountEur * eurToUsd
-      default:
-        return amountEur
-    }
-  }
-
-  const formatAmount = (amount: number) => {
+  const fmt = (amount: number) => {
     const currency = displayCurrency === "CFA" ? "XOF" : displayCurrency
     return new Intl.NumberFormat("fr-FR", { style: "currency", currency }).format(amount)
   }
 
-  // Pour l'affichage ligne par ligne, préférer la colonne native de la devise
-  const formatTransactionAmount = (tx: Transaction) => {
+  const fmtTx = (tx: Transaction) => {
     const currency = displayCurrency === "CFA" ? "XOF" : displayCurrency
-    let value: number | null = null
-    if (displayCurrency === 'CFA' && tx.amount_cfa != null) value = Number(tx.amount_cfa)
-    else if (displayCurrency === 'USD' && tx.amount_usd != null) value = Number(tx.amount_usd)
-    else if (displayCurrency === 'EUR' && tx.amount_eur != null) value = Number(tx.amount_eur)
-
-    // Repli: convertir depuis EUR si valeur native absente
-    if (value == null) value = convertAmount(Number(tx.amount_eur ?? tx.amount ?? 0))
+    let value: number
+    if (displayCurrency === 'CFA') value = Number(tx.amount_cfa ?? tx.amount_eur ?? tx.amount ?? 0)
+    else if (displayCurrency === 'USD') value = Number(tx.amount_usd ?? tx.amount_eur ?? tx.amount ?? 0)
+    else value = Number(tx.amount_eur ?? tx.amount ?? 0)
     return new Intl.NumberFormat("fr-FR", { style: "currency", currency }).format(value)
   }
 
-  // Affichage des montants aligné sur le paramètre utilisateur (comme l'onglet Stats)
-  // On ignore la devise du projet pour l'affichage Home : l’utilisateur choisit sa devise globale.
+  const balanceColor = (v: number) => v > 0 ? "text-green-600" : v < 0 ? "text-red-600" : "text-gray-600"
 
-  const getBalanceColor = (balance: number) => {
-    if (balance > 0) return "text-green-600"
-    if (balance < 0) return "text-red-600"
-    return "text-gray-600"
-  }
+  const isValidTx = (t: Transaction): t is Transaction =>
+    t?.id != null && Number.isFinite(Number(t.amount ?? t.amount_eur ?? 0)) && Number(t.amount ?? t.amount_eur ?? 0) > 0
 
-  const getTransactionBgColor = (type: string) => {
-    return type === "expense" ? "bg-red-50 dark:bg-red-950/20" : "bg-blue-50 dark:bg-blue-950/20"
-  }
-  
-  // Fonction pour vérifier si une transaction a toutes les propriétés nécessaires
-  const isValidTransaction = (transaction: Transaction | null | undefined): transaction is Transaction => {
-    if (!transaction || transaction.id == null) {
-      return false
-    }
-    const amountValue = Number(
-      transaction.amount ?? transaction.amount_eur ?? transaction.amount_cfa ?? transaction.amount_usd ?? 0,
-    )
-    return Number.isFinite(amountValue) && amountValue > 0
-  }
+  const validTx = transactions.filter(isValidTx)
 
   const globalChartData = []
-  if (stats.totalExpenses > 0) {
-    globalChartData.push({ name: "Dépenses", value: stats.totalExpenses, color: "#ef4444" })
-  }
-  if (stats.totalBudgets > 0) {
-    globalChartData.push({ name: "Budgets", value: stats.totalBudgets, color: "#3b82f6" })
-  }
+  if (stats.totalExpenses > 0) globalChartData.push({ name: "Dépenses", value: stats.totalExpenses, color: "#ef4444" })
+  if (stats.totalBudgets > 0) globalChartData.push({ name: "Budgets", value: stats.totalBudgets, color: "#3b82f6" })
 
   return (
-    <div className="p-4 space-y-6">
-      <div className="flex justify-between items-start">
-        <div className="space-y-2">
-          <h2 className="text-2xl font-bold text-foreground">Tableau de bord</h2>
-          <p className="text-muted-foreground">Vue d&apos;ensemble de vos projets et activités</p>
+    <div className="p-4 space-y-6 max-w-screen-2xl mx-auto">
+      {/* En-tête */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-bold">Tableau de bord</h2>
+          <p className="text-sm text-muted-foreground">Vue d'ensemble de vos projets et activités</p>
+        </div>
+        <div className="flex items-center gap-2">
+          {CURRENCIES.map(c => (
+            <button
+              key={c}
+              onClick={() => setDisplayCurrency(c)}
+              className={`text-sm px-3 py-1.5 rounded-lg font-medium transition-all border ${
+                displayCurrency === c ? 'bg-primary text-primary-foreground border-primary' : 'border-border text-muted-foreground hover:border-primary/40 bg-card'
+              }`}
+            >
+              {c}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -162,7 +114,7 @@ export function HomePage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-red-600">
-              {statsLoading ? "..." : formatAmount(stats.totalExpenses)}
+              {statsLoading ? <span className="h-7 w-32 bg-muted animate-pulse rounded block" /> : fmt(stats.totalExpenses)}
             </div>
             <div className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
               <span>Tous projets confondus</span>
@@ -174,10 +126,10 @@ export function HomePage() {
             </div>
           </CardContent>
           {!statsLoading && stats.lastTransactionDate && (
-            <CardFooter className="pt-0 pb-2">
+            <CardFooter className="pt-0 pb-3">
               <div className="flex items-center gap-1 text-xs text-muted-foreground">
                 <Clock className="h-3 w-3" />
-                <span>Dernière transaction: {formatDateRelative(stats.lastTransactionDate)}</span>
+                <span>Dernière : {formatDateRelative(stats.lastTransactionDate)}</span>
               </div>
             </CardFooter>
           )}
@@ -190,7 +142,7 @@ export function HomePage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-blue-600">
-              {statsLoading ? "..." : formatAmount(stats.totalBudgets)}
+              {statsLoading ? <span className="h-7 w-32 bg-muted animate-pulse rounded block" /> : fmt(stats.totalBudgets)}
             </div>
             <div className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
               <span>Fonds disponibles</span>
@@ -202,10 +154,10 @@ export function HomePage() {
             </div>
           </CardContent>
           {!statsLoading && stats.projectCount > 0 && (
-            <CardFooter className="pt-0 pb-2">
+            <CardFooter className="pt-0 pb-3">
               <div className="flex items-center gap-1 text-xs text-muted-foreground">
                 <Folder className="h-3 w-3" />
-                <span>Moyenne par projet: {formatAmount(stats.totalBudgets / stats.projectCount)}</span>
+                <span>Moyenne / projet : {fmt(stats.totalBudgets / stats.projectCount)}</span>
               </div>
             </CardFooter>
           )}
@@ -217,21 +169,19 @@ export function HomePage() {
             <DollarSign className="h-4 w-4 text-green-500" />
           </CardHeader>
           <CardContent>
-            <div className={`text-2xl font-bold ${getBalanceColor(stats.balance)}`}>
-              {statsLoading ? "..." : formatAmount(stats.balance)}
+            <div className={`text-2xl font-bold ${balanceColor(stats.balance)}`}>
+              {statsLoading ? <span className="h-7 w-32 bg-muted animate-pulse rounded block" /> : fmt(stats.balance)}
             </div>
-            <div className="text-xs text-muted-foreground mt-1">
-              Budget - Dépenses
-            </div>
+            <div className="text-xs text-muted-foreground mt-1">Budget − Dépenses</div>
           </CardContent>
           {!statsLoading && (
-            <CardFooter className="pt-0 pb-2">
+            <CardFooter className="pt-0 pb-3">
               <div className="flex items-center gap-1 text-xs">
-                <span className={getBalanceColor(stats.balance)}>
-                  {stats.balance >= 0 ? "Excédent" : "Déficit"}:
+                <span className={balanceColor(stats.balance)}>
+                  {stats.balance >= 0 ? "Excédent" : "Déficit"} :
                 </span>
                 <span className="text-muted-foreground">
-                  {Math.abs(stats.totalBudgets) > 0
+                  {stats.totalBudgets > 0
                     ? `${Math.abs(Math.round((stats.balance / stats.totalBudgets) * 100))}% du budget`
                     : "N/A"}
                 </span>
@@ -241,325 +191,159 @@ export function HomePage() {
         </Card>
       </div>
 
+      {/* Charts + indicateurs visuels */}
       {!statsLoading && (stats.totalExpenses > 0 || stats.totalBudgets > 0) && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <Card>
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <div>
-                <CardTitle>Répartition Globale</CardTitle>
-                <CardDescription>Vue d&apos;ensemble des dépenses et budgets</CardDescription>
-              </div>
+            <CardHeader className="pb-2">
+              <CardTitle>Répartition Globale</CardTitle>
+              <CardDescription>Vue d'ensemble des dépenses et budgets</CardDescription>
             </CardHeader>
             <CardContent>
               <CustomPieChart data={globalChartData} title="Dépenses vs Budgets" size={180} currency={displayCurrency === 'CFA' ? 'XOF' : displayCurrency} />
             </CardContent>
           </Card>
 
-          {/* Indicateurs Visuels dans la 2e colonne */}
           <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <div>
-              <CardTitle>Indicateurs Visuels</CardTitle>
-              <CardDescription>Représentation graphique des totaux</CardDescription>
-            </div>
-            <Button 
-              variant="outline" 
-              size="sm"
-              onClick={() => setShowDetails(!showDetails)}
-              className="h-8 gap-1"
-            >
-              {showDetails ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-              {showDetails ? "Moins de détails" : "Plus de détails"}
-            </Button>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {stats.totalExpenses > 0 && (
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
               <div>
-                <div className="flex justify-between items-center mb-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium">Dépenses</span>
-                    {showDetails && (
-                      <Badge variant="outline" className="text-xs">
-                        {Math.round((stats.totalExpenses / Math.max(1, stats.totalExpenses + stats.totalBudgets)) * 100)}% du total
-                      </Badge>
-                    )}
-                  </div>
-                  <span className="text-sm text-red-600">{formatAmount(stats.totalExpenses)}</span>
-                </div>
-                <div className="w-full bg-red-100 rounded-full h-2.5">
-                  <div
-                    className="bg-red-500 h-2.5 rounded-full"
-                    style={{
-                      width: `${Math.min(100, (stats.totalExpenses / Math.max(stats.totalBudgets, stats.totalExpenses)) * 100)}%`,
-                    }}
-                  ></div>
-                </div>
-                {showDetails && stats.transactionCount > 0 && (
-                  <div className="flex justify-between items-center mt-1">
-                    <span className="text-xs text-muted-foreground">Moyenne par transaction</span>
-                    <span className="text-xs font-medium">{formatAmount((stats.totalExpenses) / Math.max(1, stats.transactionCount))}</span>
-                  </div>
-                )}
+                <CardTitle>Indicateurs Visuels</CardTitle>
+                <CardDescription>Représentation graphique des totaux</CardDescription>
               </div>
-            )}
-
-            {stats.totalBudgets > 0 && (
-              <div>
-                <div className="flex justify-between items-center mb-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium">Budgets</span>
-                    {showDetails && (
-                      <Badge variant="outline" className="text-xs">
-                        {Math.round((stats.totalBudgets / Math.max(1, stats.totalExpenses + stats.totalBudgets)) * 100)}% du total
-                      </Badge>
-                    )}
+              <Button variant="outline" size="sm" onClick={() => setShowDetails(!showDetails)} className="h-8 gap-1">
+                {showDetails ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                {showDetails ? "Moins" : "Plus"}
+              </Button>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {stats.totalExpenses > 0 && (
+                <div>
+                  <div className="flex justify-between items-center mb-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium">Dépenses</span>
+                      {showDetails && (
+                        <Badge variant="outline" className="text-xs">
+                          {Math.round((stats.totalExpenses / Math.max(1, stats.totalExpenses + stats.totalBudgets)) * 100)}% du total
+                        </Badge>
+                      )}
+                    </div>
+                    <span className="text-sm text-red-600">{fmt(stats.totalExpenses)}</span>
                   </div>
-                  <span className="text-sm text-blue-600">{formatAmount(stats.totalBudgets)}</span>
-                </div>
-                <div className="w-full bg-blue-100 rounded-full h-2.5">
-                  <div
-                    className="bg-blue-500 h-2.5 rounded-full"
-                    style={{
-                      width: `${Math.min(100, (stats.totalBudgets) / Math.max(stats.totalBudgets, stats.totalExpenses) * 100)}%`,
-                    }}
-                  ></div>
-                </div>
-                {showDetails && stats.projectCount > 0 && (
-                  <div className="flex justify-between items-center mt-1">
-                    <span className="text-xs text-muted-foreground">Moyenne par projet</span>
-                    <span className="text-xs font-medium">{formatAmount((stats.totalBudgets) / Math.max(1, stats.projectCount))}</span>
+                  <div className="w-full bg-red-100 dark:bg-red-950/20 rounded-full h-2.5">
+                    <div className="bg-red-500 h-2.5 rounded-full" style={{ width: `${Math.min(100, (stats.totalExpenses / Math.max(stats.totalBudgets, stats.totalExpenses)) * 100)}%` }} />
                   </div>
-                )}
-              </div>
-            )}
-
-            <div className="pt-2 border-t">
-              <div className="flex justify-between items-center">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium">Solde</span>
-                  {showDetails && stats.totalBudgets > 0 && (
-                    <Badge 
-                      variant={stats.balance >= 0 ? "default" : "destructive"}
-                      className="text-xs"
-                    >
-                      {stats.balance >= 0 ? "Excédent" : "Déficit"}
-                    </Badge>
+                  {showDetails && stats.transactionCount > 0 && (
+                    <div className="flex justify-between mt-1">
+                      <span className="text-xs text-muted-foreground">Moyenne / transaction</span>
+                      <span className="text-xs font-medium">{fmt(stats.totalExpenses / Math.max(1, stats.transactionCount))}</span>
+                    </div>
                   )}
                 </div>
-                <span className={`text-sm font-bold ${getBalanceColor(stats.balance)}`}>
-                  {formatAmount(stats.balance)}
-                </span>
-              </div>
-              
-              {showDetails && (
-                <div className="mt-2 p-2 bg-muted/50 rounded-md">
-                  <div className="text-xs">
-                    <div className="flex justify-between mb-1">
-                      <span>Taux d&rsquo;utilisation du budget:</span>
-                      <span className="font-medium">
-                        {stats.totalBudgets > 0 
-                          ? `${Math.min(100, Math.round((stats.totalExpenses / Math.max(1, stats.totalBudgets)) * 100))}%` 
-                          : "N/A"}
-                      </span>
+              )}
+
+              {stats.totalBudgets > 0 && (
+                <div>
+                  <div className="flex justify-between items-center mb-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium">Budgets</span>
+                      {showDetails && (
+                        <Badge variant="outline" className="text-xs">
+                          {Math.round((stats.totalBudgets / Math.max(1, stats.totalExpenses + stats.totalBudgets)) * 100)}% du total
+                        </Badge>
+                      )}
                     </div>
-                    <div className="flex justify-between">
-                      <span>Marge restante:</span>
-                      <span className={`font-medium ${getBalanceColor(stats.balance)}`}>
-                        {formatAmount(stats.balance)}
-                      </span>
-                    </div>
+                    <span className="text-sm text-blue-600">{fmt(stats.totalBudgets)}</span>
                   </div>
+                  <div className="w-full bg-blue-100 dark:bg-blue-950/20 rounded-full h-2.5">
+                    <div className="bg-blue-500 h-2.5 rounded-full" style={{ width: `${Math.min(100, (stats.totalBudgets / Math.max(stats.totalBudgets, stats.totalExpenses)) * 100)}%` }} />
+                  </div>
+                  {showDetails && stats.projectCount > 0 && (
+                    <div className="flex justify-between mt-1">
+                      <span className="text-xs text-muted-foreground">Moyenne / projet</span>
+                      <span className="text-xs font-medium">{fmt(stats.totalBudgets / Math.max(1, stats.projectCount))}</span>
+                    </div>
+                  )}
                 </div>
               )}
-            </div>
-          </CardContent>
-        </Card>
+
+              <div className="pt-2 border-t">
+                <div className="flex justify-between items-center">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium">Solde</span>
+                    {showDetails && stats.totalBudgets > 0 && (
+                      <Badge variant={stats.balance >= 0 ? "default" : "destructive"} className="text-xs">
+                        {stats.balance >= 0 ? "Excédent" : "Déficit"}
+                      </Badge>
+                    )}
+                  </div>
+                  <span className={`text-sm font-bold ${balanceColor(stats.balance)}`}>{fmt(stats.balance)}</span>
+                </div>
+                {showDetails && (
+                  <div className="mt-2 p-2 bg-muted/50 rounded-md text-xs space-y-1">
+                    <div className="flex justify-between">
+                      <span>Taux d'utilisation :</span>
+                      <span className="font-medium">{stats.totalBudgets > 0 ? `${Math.min(100, Math.round((stats.totalExpenses / stats.totalBudgets) * 100))}%` : "N/A"}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Marge restante :</span>
+                      <span className={`font-medium ${balanceColor(stats.balance)}`}>{fmt(stats.balance)}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
         </div>
       )}
 
       {/* Dernières saisies */}
       <Card>
-                  <CardHeader className="pb-3">
-            <div className="flex justify-between items-center">
-              <div>
-                <CardTitle>Dernières saisies</CardTitle>
-                <CardDescription>Activité récente sur tous vos projets</CardDescription>
-              </div>
-              {/* Boutons supprimés selon la demande */}
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>Dernières saisies</CardTitle>
+              <CardDescription>Activité récente sur tous vos projets</CardDescription>
             </div>
-          </CardHeader>
+            <button
+              onClick={() => { refetchStats(); refetchTx() }}
+              className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-muted transition-colors"
+              title="Rafraîchir"
+            >
+              <RefreshCw className="h-4 w-4 text-muted-foreground" />
+            </button>
+          </div>
+        </CardHeader>
         <CardContent>
-          {transactionsLoading ? (
+          {txLoading ? (
             <div className="text-center py-8">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
-              <p className="mt-2 text-sm text-muted-foreground">Chargement des transactions...</p>
-            </div>
-          ) : transactions.filter(isValidTransaction).length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              <p>Aucune saisie pour le moment</p>
-              <p className="text-sm">Commencez par créer un projet et ajouter des dépenses</p>
-              <div className="flex gap-2 justify-center mt-4">
-                <Button variant="outline">
-                  Créer une saisie
-                </Button>
-              </div>
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto" />
+              <p className="mt-2 text-sm text-muted-foreground">Chargement…</p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Type</TableHead>
-                    <TableHead>Titre</TableHead>
-                    <TableHead>Catégorie</TableHead>
-                    <TableHead>Sous-catégorie</TableHead>
-                    <TableHead>Montant</TableHead>
-                    <TableHead>Projet</TableHead>
-                    <TableHead>Utilisateur</TableHead>
-                    <TableHead>Note</TableHead>
-                    <TableHead>Date</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {transactions
-                    .filter(isValidTransaction)
-                    .map((transaction) => (
-                    <TableRow key={transaction.id} className={getTransactionBgColor(transaction.type)}>
-                      <TableCell>
-                        <Badge variant={transaction.type === "expense" ? "destructive" : "default"}>
-                          {transaction.type === "expense" ? "Dépense" : "Budget"}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="font-medium">
-                        {transaction.parent_category_name && transaction.category_name
-                          ? `${transaction.parent_category_name}/${transaction.category_name}`
-                          : (transaction.category_name || transaction.title || "—")}
-                      </TableCell>
-                      <TableCell className="font-medium">
-                        {transaction.parent_category_name || transaction.category_name || "-"}
-                      </TableCell>
-                      <TableCell>
-                        {transaction.parent_category_name ? transaction.category_name : ""}
-                      </TableCell>
-                      <TableCell className="font-medium">
-                        <span className={transaction.type === "expense" ? "text-red-600" : "text-blue-600"}>
-                          {formatTransactionAmount(transaction)}
-                        </span>
-                      </TableCell>
-                      <TableCell className="max-w-[120px] truncate">
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-lg leading-none">{transaction.project_icon || "📁"}</span>
-                          <span>{transaction.project_name}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell>{transaction.user_name}</TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          {/* Icône texte si description présente (texte pur uniquement) */}
-                          {transaction.description && typeof transaction.description === 'string' && !/^data:.+;base64,/.test(transaction.description) && (
-                            <button
-                              className="p-1 hover:bg-muted rounded"
-                              title="Voir la note"
-                              onClick={() => setPreview({ type: 'text', content: String(transaction.description), title: 'Note' })}
-                            >
-                              <FileText className="h-4 w-4 text-muted-foreground" />
-                            </button>
-                          )}
-                          {/* Icônes issues de la table notes (document/image/audio) */}
-                          {transaction.has_document && (
-                            <button
-                              className="p-1 hover:bg-muted rounded"
-                              title="Voir le document"
-                              onClick={async () => {
-                                if (!transaction.id) return
-                                const notes = await db.getNotesByTransaction(transaction.id)
-                                const doc = notes.find((n: Note) => n.content_type === 'text' && n.file_path)
-                                if (doc) {
-                                  // Ouvrir la data URL (pdf/doc) dans un nouvel onglet si possible
-                                  const url = doc.content
-                                  if (typeof window !== 'undefined') {
-                                    window.open(url, '_blank')
-                                  }
-                                }
-                              }}
-                            >
-                              <File className="h-4 w-4 text-purple-600" />
-                            </button>
-                          )}
-                          {transaction.has_image && (
-                            <button
-                              className="p-1 hover:bg-muted rounded"
-                              title="Voir l'image"
-                              onClick={async () => {
-                                if (!transaction.id) return
-                                const notes = await db.getNotesByTransaction(transaction.id)
-                                const img = notes.find((n: Note) => n.content_type === 'image')
-                                if (img) setPreview({ type: 'image', content: img.content, title: img.file_path || 'Image' })
-                              }}
-                            >
-                              <ImageIcon className="h-4 w-4 text-blue-500" />
-                            </button>
-                          )}
-                          {transaction.has_audio && (
-                            <button
-                              className="p-1 hover:bg-muted rounded"
-                              title="Écouter l'audio"
-                              onClick={async () => {
-                                if (!transaction.id) return
-                                const notes = await db.getNotesByTransaction(transaction.id)
-                                const audio = notes.find((n: Note) => n.content_type === 'audio')
-                                if (audio) setPreview({ type: 'audio', content: audio.content, title: audio.file_path || 'Audio' })
-                              }}
-                            >
-                              <Music className="h-4 w-4 text-green-600" />
-                            </button>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        {transaction.created_at ? new Date(transaction.created_at).toLocaleString('fr-FR') : ''}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+            <TransactionTable
+              transactions={validTx}
+              formatAmount={fmtTx}
+              showProject={true}
+              emptyMessage="Aucune saisie pour le moment. Commencez par créer un projet et ajouter des dépenses."
+            />
           )}
         </CardContent>
-        {transactions.length > 0 && (
-          <CardFooter className="flex justify-between items-center py-2 border-t">
-            <p className="text-xs text-muted-foreground">
-              Affichage des {transactions.length} dernières transactions
-            </p>
+        {validTx.length > 0 && (
+          <CardFooter className="py-2 border-t">
+            <p className="text-xs text-muted-foreground">Affichage des {validTx.length} dernières transactions</p>
           </CardFooter>
         )}
       </Card>
-      {/* Preview Dialog */}
-      <Dialog open={!!preview} onOpenChange={(open) => !open && setPreview(null)}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>{preview?.title || 'Aperçu'}</DialogTitle>
-          </DialogHeader>
-          {preview?.type === 'text' && (
-            <div className="whitespace-pre-wrap text-sm">{preview.content}</div>
-          )}
-          {preview?.type === 'image' && (
-            <div className="relative w-full h-80 max-h-[65vh]">
-              <NextImage
-                src={preview.content}
-                alt={preview?.title ?? "Aperçu image"}
-                fill
-                className="object-contain rounded border"
-                sizes="(max-width: 640px) 100vw, 512px"
-                unoptimized
-              />
-            </div>
-          )}
-          {preview?.type === 'audio' && (
-            <audio controls src={preview.content} className="w-full" />
-          )}
-        </DialogContent>
-      </Dialog>
+
+      {/* FAB saisie rapide */}
+      <button
+        onClick={() => navigate({ type: 'new-transaction' })}
+        className="fixed bottom-[76px] right-4 md:bottom-6 md:right-6 z-40 w-12 h-12 bg-primary text-primary-foreground rounded-full shadow-lg hover:shadow-xl hover:scale-105 active:scale-95 transition-all flex items-center justify-center"
+        title="Saisir une dépense"
+        aria-label="Saisir une dépense"
+      >
+        <Plus className="h-5 w-5" strokeWidth={2.5} />
+      </button>
     </div>
   )
 }

@@ -1,16 +1,12 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { Button } from "@/components/ui/button"
 import { useToast } from "@/hooks/use-toast"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Plus, X, Loader2, Save, Settings, User as UserIcon } from "lucide-react"
+import { Plus, X, Loader2, Save, User as UserIcon } from "lucide-react"
 import { useDatabase } from "@/hooks/use-database"
 import type { Category, ProjectUser, ProjectWithId, User as UserRecord } from "@/lib/types"
 
@@ -18,674 +14,421 @@ type UserWithId = Omit<UserRecord, "id"> & { id: string; is_admin?: boolean }
 type ProjectMember = UserWithId & { role: string }
 
 interface ProjectSettingsFormProps {
-  isOpen: boolean
-  onClose: () => void
+  onBack: () => void
   onSuccess: () => void
   projectId: number
   activeTab?: string
 }
 
-// Restreindre aux 3 devises demandées
 const CURRENCIES = [
   { code: "EUR", symbol: "€", name: "Euro" },
   { code: "USD", symbol: "$", name: "Dollar US" },
-  // Utiliser le code "CFA" pour l'UX, on convertira en "XOF" pour l'affichage si nécessaire
   { code: "CFA", symbol: "CFA", name: "Franc CFA" },
 ]
 
 const PROJECT_COLORS = [
-  { name: "Bleu", value: "#3b82f6", bg: "bg-blue-500" },
-  { name: "Vert", value: "#10b981", bg: "bg-green-500" },
-  { name: "Violet", value: "#8b5cf6", bg: "bg-violet-500" },
-  { name: "Rose", value: "#ec4899", bg: "bg-pink-500" },
-  { name: "Orange", value: "#f59e0b", bg: "bg-amber-500" },
-  { name: "Rouge", value: "#ef4444", bg: "bg-red-500" },
-  { name: "Indigo", value: "#6366f1", bg: "bg-indigo-500" },
-  { name: "Teal", value: "#14b8a6", bg: "bg-teal-500" },
+  { name: "Bleu",   value: "#3b82f6" },
+  { name: "Vert",   value: "#10b981" },
+  { name: "Violet", value: "#8b5cf6" },
+  { name: "Rose",   value: "#ec4899" },
+  { name: "Orange", value: "#f59e0b" },
+  { name: "Rouge",  value: "#ef4444" },
+  { name: "Indigo", value: "#6366f1" },
+  { name: "Teal",   value: "#14b8a6" },
 ]
 
 const PROJECT_ICONS = ["📁", "🏠", "🚗", "🛒", "🎯", "💼", "🎨", "🏖️", "🎓", "💡"]
 
-export function ProjectSettingsForm({ isOpen, onClose, onSuccess, projectId, activeTab = "details" }: ProjectSettingsFormProps) {
+const TABS = [
+  { id: "general",    label: "Général" },
+  { id: "categories", label: "Catégories" },
+  { id: "users",      label: "Utilisateurs" },
+  { id: "currency",   label: "Devise" },
+]
+
+export function ProjectSettingsForm({ onBack, onSuccess, projectId, activeTab = "general" }: ProjectSettingsFormProps) {
   const { toast } = useToast()
   const { db } = useDatabase()
-  const [project, setProject] = useState<ProjectWithId | null>(null)
+
+  const [currentTab, setCurrentTab] = useState(activeTab)
+  const [project, setProject]       = useState<ProjectWithId | null>(null)
   const [projectUsers, setProjectUsers] = useState<ProjectMember[]>([])
   const [categories, setCategories] = useState<Category[]>([])
-  const [allUsers, setAllUsers] = useState<UserWithId[]>([])
-  const [currentTab, setCurrentTab] = useState(activeTab)
-  
-  const [formData, setFormData] = useState({
-    name: "",
-    description: "",
-    icon: "📁",
-    color: "#3b82f6",
-    currency: "EUR",
-  })
-  // Taux de conversion spécifiques au projet (1 € = …)
-  const [eurToCfa, setEurToCfa] = useState<string>("")
-  const [eurToUsd, setEurToUsd] = useState<string>("")
+  const [allUsers, setAllUsers]     = useState<UserWithId[]>([])
 
-  const [newCategory, setNewCategory] = useState("")
+  const [formData, setFormData] = useState({ name: "", description: "", icon: "📁", color: "#3b82f6", currency: "EUR" })
+  const [eurToCfa, setEurToCfa] = useState("")
+  const [eurToUsd, setEurToUsd] = useState("")
+
+  const [newCategory, setNewCategory]   = useState("")
   const [newSubcategory, setNewSubcategory] = useState("")
   const [selectedCategoryForSub, setSelectedCategoryForSub] = useState<number | null>(null)
-  
-  const [newUserId, setNewUserId] = useState<string | null>(null)
+
+  const [newUserId, setNewUserId]   = useState<string | null>(null)
   const [isAddingUser, setIsAddingUser] = useState(false)
   const [isRemovingUser, setIsRemovingUser] = useState<string | null>(null)
-  
-  const [error, setError] = useState("")
+
+  const [error, setError]     = useState("")
   const [isLoading, setIsLoading] = useState(false)
+  const [savedOk, setSavedOk] = useState(false)
 
+  // ─── Chargement ────────────────────────────────────────────────────────────
   const loadProjectData = useCallback(async () => {
-    if (!db) {
-      return
-    }
-
-  setIsLoading(true)
-  setEurToCfa("")
-  setEurToUsd("")
-
+    if (!db) return
+    setIsLoading(true)
+    setEurToCfa("")
+    setEurToUsd("")
     try {
       const projectData = await db.getProjectById(projectId)
       if (projectData && typeof projectData.id === "number") {
-        const normalizedProject: ProjectWithId = {
-          ...projectData,
-          id: Number(projectData.id),
-        }
-        setProject(normalizedProject)
-
+        setProject({ ...projectData, id: Number(projectData.id) })
         const dbCurrency = (projectData.currency as string) || "EUR"
-        const uiCurrency = dbCurrency === "XOF" ? "CFA" : dbCurrency
         setFormData({
           name: projectData.name,
           description: projectData.description ?? "",
           icon: projectData.icon,
           color: projectData.color,
-          currency: uiCurrency,
+          currency: dbCurrency === "XOF" ? "CFA" : dbCurrency,
         })
-      } else {
-        setProject(null)
       }
 
-      const projectCategoriesRaw = await db.categories
-        .where("project_id")
-        .equals(projectId)
-        .toArray()
-
-      const normalizedCategories = Array.isArray(projectCategoriesRaw)
-        ? projectCategoriesRaw.filter((category): category is Category =>
-            category != null && typeof category.name === "string",
-          )
-        : []
-      setCategories(normalizedCategories)
+      const cats = await db.categories.where("project_id").equals(projectId).toArray()
+      setCategories(Array.isArray(cats) ? cats.filter((c): c is Category => c != null && typeof c.name === "string") : [])
 
       const users = await db.users.toArray()
-      const normalizedUsers = users.reduce<UserWithId[]>((acc, user) => {
-        if (user && typeof user.id === "string") {
-          const normalizedUser: UserWithId = { ...user, id: user.id }
-          acc.push(normalizedUser)
-        }
+      setAllUsers(users.reduce<UserWithId[]>((acc, u) => {
+        if (u && typeof u.id === "string") acc.push({ ...u, id: u.id })
         return acc
-      }, [])
-      setAllUsers(normalizedUsers)
+      }, []))
 
-      const projectUserRecordsRaw = await db.project_users
-        .where("project_id")
-        .equals(projectId)
-        .toArray()
+      const puRaw = await db.project_users.where("project_id").equals(projectId).toArray()
+      const puRecords = Array.isArray(puRaw) ? puRaw.filter((r): r is ProjectUser => r != null && typeof r.role === "string") : []
+      const members = await Promise.all(puRecords.map(async pu => {
+        const u = await db.users.get(pu.user_id)
+        if (!u || typeof u.id !== "string") return null
+        return { ...u, id: u.id, role: pu.role } as ProjectMember
+      }))
+      setProjectUsers(members.filter((m): m is ProjectMember => m !== null))
 
-      const projectUserRecords = Array.isArray(projectUserRecordsRaw)
-        ? projectUserRecordsRaw.filter((record): record is ProjectUser =>
-            record != null && typeof record.role === "string",
-          )
-        : []
-
-      const projUsers = await Promise.all(
-        projectUserRecords.map(async (pu) => {
-          const user = await db.users.get(pu.user_id)
-          if (!user || typeof user.id !== "string") {
-            return null
-          }
-
-          const member: ProjectMember = {
-            ...user,
-            id: user.id,
-            role: pu.role,
-          }
-
-          return member
-        }),
-      )
-
-      setProjectUsers(projUsers.filter((member): member is ProjectMember => member !== null))
-
-      try {
-        const cfa = await db.settings.get(`project:${projectId}:eur_to_cfa`)
-        const usd = await db.settings.get(`project:${projectId}:eur_to_usd`)
-        if (cfa?.value) setEurToCfa(String(cfa.value))
-        if (usd?.value) setEurToUsd(String(usd.value))
-      } catch {
-        // Paramètres optionnels, ignorer les erreurs
-      }
-    } catch (error) {
-      console.error("Failed to load project data:", error)
-      setError("Erreur lors du chargement des données du projet")
+      const cfa = await db.settings.get(`project:${projectId}:eur_to_cfa`)
+      const usd = await db.settings.get(`project:${projectId}:eur_to_usd`)
+      if (cfa?.value) setEurToCfa(String(cfa.value))
+      if (usd?.value) setEurToUsd(String(usd.value))
+    } catch {
+      setError("Erreur lors du chargement")
     } finally {
       setIsLoading(false)
     }
   }, [db, projectId])
 
-  useEffect(() => {
-    if (isOpen && projectId && db) {
-      void loadProjectData()
-      // Mettre à jour l'onglet actif si les props changent
-      setCurrentTab(activeTab)
-    }
-  }, [isOpen, projectId, db, activeTab, loadProjectData])
+  useEffect(() => { if (db) void loadProjectData() }, [db, loadProjectData])
 
+  // ─── Enregistrer le projet ─────────────────────────────────────────────────
   const handleSaveProject = async () => {
     if (!db) return
-    setIsLoading(true)
-    setError("")
-    
+    if (!formData.name.trim()) { setError("Le nom du projet est obligatoire"); return }
+    setIsLoading(true); setError("")
     try {
-      // Valider que le nom du projet n'est pas vide
-      if (!formData.name.trim()) {
-        setError("Le nom du projet est obligatoire")
-        return
-      }
-
-      // Mettre à jour les données du projet (enregistrer directement le code de devise choisi)
-      const updatedProject = await db.updateProject(projectId, {
-        name: formData.name,
-        description: formData.description,
-        icon: formData.icon,
-        color: formData.color,
-        currency: formData.currency
+      const updated = await db.updateProject(projectId, {
+        name: formData.name, description: formData.description,
+        icon: formData.icon, color: formData.color, currency: formData.currency,
       })
-
-  if (updatedProject) {
-        // Sauvegarder les taux de conversion projet si fournis (ignorer si db.settings indisponible)
-        if (eurToCfa) {
-          try { await db.settings.put({ key: `project:${projectId}:eur_to_cfa`, value: eurToCfa }) } catch { /* skip */ }
-        }
-        if (eurToUsd) {
-          try { await db.settings.put({ key: `project:${projectId}:eur_to_usd`, value: eurToUsd }) } catch { /* skip */ }
-        }
-
-  // Recharger entièrement les données du projet (devise et taux) pour garantir la cohérence
-  await loadProjectData()
-
-        // Notifier l'app du changement de devise projet
-        const detail = {
-          projectId,
-          currency: formData.currency,
-          eurToCfa,
-          eurToUsd,
-        }
-        if (typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('expenshare:project-currency-changed', { detail }))
-          // Event pour rechargement général des données
-          window.dispatchEvent(new CustomEvent('expenshare:project-updated', { detail: { projectId } }))
-        }
-
-        // Afficher un toast de succès
-        toast({
-          title: "Projet mis à jour",
-          description: "Les modifications ont été enregistrées avec succès.",
-          variant: "default"
-        })
-
-  // Fermer le formulaire et notifier le succès
-  onSuccess()
-  onClose()
-      } else {
-        setError("Erreur lors de la mise à jour du projet")
-      }
-    } catch (error) {
-      console.error("Failed to update project:", error)
-      setError("Erreur lors de la mise à jour du projet")
-    } finally {
-      setIsLoading(false)
-    }
+      if (!updated) { setError("Erreur lors de la mise à jour"); return }
+      if (eurToCfa) await db.settings.put({ key: `project:${projectId}:eur_to_cfa`, value: eurToCfa }).catch(() => {})
+      if (eurToUsd) await db.settings.put({ key: `project:${projectId}:eur_to_usd`, value: eurToUsd }).catch(() => {})
+      window.dispatchEvent(new CustomEvent("expenshare:project-currency-changed", { detail: { projectId, currency: formData.currency, eurToCfa, eurToUsd } }))
+      window.dispatchEvent(new CustomEvent("expenshare:project-updated", { detail: { projectId } }))
+      toast({ title: "Projet mis à jour", description: "Modifications enregistrées." })
+      setSavedOk(true); setTimeout(() => setSavedOk(false), 2000)
+      onSuccess()
+    } catch { setError("Erreur lors de la mise à jour") }
+    finally { setIsLoading(false) }
   }
-  
+
+  // ─── Catégories ───────────────────────────────────────────────────────────
   const addCategory = async () => {
     if (!newCategory.trim() || !db) return
     setIsLoading(true)
-    
     try {
-      await db.categories.add({
-        project_id: projectId,
-        name: newCategory.trim(),
-        level: 1,
-        parent_id: undefined,
-      })
-      
-      setNewCategory("")
-      await loadProjectData() // Recharger les catégories
-    } catch (error) {
-      console.error("Failed to add category:", error)
-    } finally {
-      setIsLoading(false)
-    }
+      await db.categories.add({ project_id: projectId, name: newCategory.trim(), level: 1, parent_id: undefined })
+      setNewCategory(""); await loadProjectData()
+    } catch { /* ignore */ } finally { setIsLoading(false) }
   }
-  
+
   const addSubcategory = async () => {
     if (!newSubcategory.trim() || !selectedCategoryForSub || !db) return
     setIsLoading(true)
-    
     try {
-      await db.categories.add({
-        project_id: projectId,
-        name: newSubcategory.trim(),
-        level: 2,
-        parent_id: selectedCategoryForSub,
-      })
-      
-      setNewSubcategory("")
-      await loadProjectData() // Recharger les catégories
-    } catch (error) {
-      console.error("Failed to add subcategory:", error)
-    } finally {
-      setIsLoading(false)
-    }
+      await db.categories.add({ project_id: projectId, name: newSubcategory.trim(), level: 2, parent_id: selectedCategoryForSub })
+      setNewSubcategory(""); await loadProjectData()
+    } catch { /* ignore */ } finally { setIsLoading(false) }
   }
-  
+
+  // ─── Utilisateurs ─────────────────────────────────────────────────────────
   const addUserToProject = async () => {
     if (!db || !newUserId) return
-    
     setIsAddingUser(true)
     try {
-      if (projectUsers.some((user) => user.id === newUserId)) {
-        setError("Cet utilisateur est déjà dans le projet")
-        return
-      }
-      
-      // Ajouter l'utilisateur au projet avec un rôle par défaut
-      await db.project_users.add({
-        project_id: projectId,
-            user_id: newUserId,
-        role: "member",
-            added_at: new Date().toISOString()
-      })
-
-      await loadProjectData()
-      setNewUserId(null)
-      
-    } catch (error: unknown) {
-      console.error("Failed to add user to project:", error)
-      const msg = error instanceof Error ? error.message : "Erreur lors de l'ajout de l'utilisateur au projet"
+      if (projectUsers.some(u => u.id === newUserId)) { setError("Déjà dans le projet"); return }
+      await db.project_users.add({ project_id: projectId, user_id: newUserId, role: "member", added_at: new Date().toISOString() })
+      await loadProjectData(); setNewUserId(null)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Erreur d'ajout"
       setError(msg)
-      // Avertissements spécifiques
-      if (msg.includes('Seul le propriétaire du projet') || msg.includes("L'administrateur doit faire partie du projet")) {
-        toast({
-          title: "Action non autorisée",
-          description: msg,
-          variant: "destructive"
-        })
-      } else {
-        toast({ title: "Échec de l'ajout", description: msg, variant: "destructive" })
-      }
-    } finally {
-      setIsAddingUser(false)
-    }
+      toast({ title: "Échec", description: msg, variant: "destructive" })
+    } finally { setIsAddingUser(false) }
   }
-  
+
   const removeUserFromProject = async (userId: string | number) => {
     if (!db) return
-    
     setIsRemovingUser(String(userId))
     try {
-      // Supprimer l'utilisateur du projet
       await db.project_users.remove(projectId, userId)
-
-          await loadProjectData()
-      
-    } catch (error: unknown) {
-      console.error("Failed to remove user from project:", error)
-      const msg = error instanceof Error ? error.message : "Erreur lors de la suppression de l'utilisateur du projet"
+      await loadProjectData()
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Erreur de suppression"
       setError(msg)
-      // Avertissements spécifiques
-      if (msg.includes('Impossible de retirer le propriétaire')) {
-        toast({
-          title: "Propriétaire non retirable",
-          description: "Vous ne pouvez pas retirer le propriétaire du projet.",
-          variant: "destructive"
-        })
-      } else if (msg.includes('Seul le propriétaire du projet') || msg.includes('administrateur')) {
-        toast({
-          title: "Action non autorisée",
-          description: "Vous n'avez pas la permission de retirer cet utilisateur.",
-          variant: "destructive"
-        })
-      } else {
-        toast({ title: "Échec de la suppression", description: msg, variant: "destructive" })
-      }
-    } finally {
-  setIsRemovingUser(null)
-    }
+      toast({ title: "Échec", description: msg, variant: "destructive" })
+    } finally { setIsRemovingUser(null) }
   }
 
+  // ─── Render ───────────────────────────────────────────────────────────────
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Settings className="h-5 w-5" />
-            Paramètres du projet
-          </DialogTitle>
-          <DialogDescription>Configurez les paramètres du projet</DialogDescription>
-        </DialogHeader>
+    <div className="max-w-2xl mx-auto px-4 py-6 space-y-0">
 
-        {error && (
-          <Alert variant="destructive" className="my-4">
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        )}
+      {/* Onglets underline */}
+      <div className="border-b border-border mb-6">
+        <div className="flex overflow-x-auto">
+          {TABS.map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setCurrentTab(tab.id)}
+              className={`flex-shrink-0 px-5 py-3 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap ${
+                currentTab === tab.id
+                  ? "border-primary text-primary"
+                  : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      </div>
 
-        {isLoading && !project ? (
-          <div className="flex justify-center p-6">
-            <Loader2 className="h-10 w-10 animate-spin text-primary" />
-          </div>
-        ) : (
-          <Tabs defaultValue={currentTab} className="mt-4" onValueChange={setCurrentTab}>
-            <TabsList className="grid w-full grid-cols-4">
-              <TabsTrigger value="general">Général</TabsTrigger>
-              <TabsTrigger value="categories">Catégories</TabsTrigger>
-              <TabsTrigger value="users">Utilisateurs</TabsTrigger>
-              <TabsTrigger value="currency">Devise</TabsTrigger>
-            </TabsList>
+      {error && (
+        <div className="mb-4 flex items-start gap-2 p-3 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 rounded-xl">
+          <span className="text-red-500 text-sm flex-1">{error}</span>
+          <button onClick={() => setError("")}><X className="h-4 w-4 text-red-400" /></button>
+        </div>
+      )}
 
-            {/* Onglet Général */}
-            <TabsContent value="general" className="space-y-4 py-4">
-              <div className="grid gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="name">Nom du projet</Label>
-                  <Input
-                    id="name"
-                    value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="description">Description (optionnel)</Label>
-                  <Textarea
-                    id="description"
-                    value={formData.description}
-                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Icône</Label>
-                  <div className="flex flex-wrap gap-2">
-                    {PROJECT_ICONS.map((icon) => (
-                      <button
-                        key={icon}
-                        type="button"
-                        onClick={() => setFormData({ ...formData, icon })}
-                        className={`text-2xl p-2 rounded-md ${
-                          formData.icon === icon ? "bg-primary/20 ring-1 ring-primary" : "hover:bg-muted"
-                        }`}
-                        aria-label={`Choisir l'icône ${icon}`}
-                      >
-                        {icon}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <Label>Couleur</Label>
-                  <div className="flex flex-wrap gap-2">
-                    {PROJECT_COLORS.map((color) => (
-                      <button
-                        key={color.value}
-                        type="button"
-                        onClick={() => setFormData({ ...formData, color: color.value })}
-                        className={`w-7 h-7 rounded-full border-2 ${
-                          formData.color === color.value ? "border-primary ring-2 ring-primary" : "border-muted"
-                        }`}
-                        style={{ backgroundColor: color.value }}
-                        aria-label={`Choisir la couleur ${color.name}`}
-                      />
-                    ))}
-                  </div>
+      {isLoading && !project ? (
+        <div className="flex justify-center py-16"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>
+      ) : (
+        <div className="space-y-5">
+
+          {/* ── Général ── */}
+          {currentTab === "general" && (
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="name">Nom du projet</Label>
+                <Input id="name" value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="description">Description (optionnel)</Label>
+                <Textarea id="description" value={formData.description} onChange={e => setFormData({ ...formData, description: e.target.value })} />
+              </div>
+              <div className="space-y-2">
+                <Label>Icône</Label>
+                <div className="flex flex-wrap gap-2">
+                  {PROJECT_ICONS.map(icon => (
+                    <button key={icon} type="button" onClick={() => setFormData({ ...formData, icon })}
+                      className={`text-2xl p-2 rounded-xl transition-all ${formData.icon === icon ? "bg-primary/10 ring-2 ring-primary" : "hover:bg-muted"}`}>
+                      {icon}
+                    </button>
+                  ))}
                 </div>
               </div>
-            </TabsContent>
-
-                  {/* Onglet Devise */}
-                  <TabsContent value="currency" className="space-y-4 py-4">
-                <div className="space-y-4">
-                  <div>
-                    <Label>Devise</Label>
-                    <Select
-                      value={formData.currency}
-                      onValueChange={value => setFormData({ ...formData, currency: value })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Sélectionner une devise" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {CURRENCIES.map(currency => (
-                          <SelectItem key={currency.code} value={currency.code}>
-                            {currency.symbol} - {currency.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="flex gap-2 mt-2">
-                    <div className="flex-1">
-                      <Label>1 € = (CFA)</Label>
-                      <Input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={eurToCfa}
-                        onChange={e => setEurToCfa(e.target.value)}
-                      />
-                    </div>
-                    <div className="flex-1">
-                      <Label>1 € = (USD)</Label>
-                      <Input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={eurToUsd}
-                        onChange={e => setEurToUsd(e.target.value)}
-                      />
-                    </div>
-                  </div>
-                  <Button onClick={handleSaveProject} disabled={isLoading} className="mt-4">
-                    {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-                    Enregistrer les modifications
-                  </Button>
+              <div className="space-y-2">
+                <Label>Couleur</Label>
+                <div className="flex flex-wrap gap-2.5">
+                  {PROJECT_COLORS.map(c => (
+                    <button key={c.value} type="button" onClick={() => setFormData({ ...formData, color: c.value })}
+                      aria-label={c.name}
+                      className={`w-8 h-8 rounded-full border-2 transition-all ${formData.color === c.value ? "border-foreground ring-2 ring-offset-1 ring-primary" : "border-transparent hover:scale-110"}`}
+                      style={{ backgroundColor: c.value }} />
+                  ))}
                 </div>
-            </TabsContent>
+              </div>
+              <button
+                onClick={handleSaveProject} disabled={isLoading}
+                className={`w-full h-11 rounded-xl font-medium text-sm flex items-center justify-center gap-2 transition-all ${
+                  savedOk ? "bg-green-500 text-white" : "bg-primary text-primary-foreground hover:bg-primary/90"
+                }`}
+              >
+                {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : savedOk ? "✓ Enregistré" : <><Save className="h-4 w-4" /> Enregistrer</>}
+              </button>
+            </div>
+          )}
 
-            {/* Onglet Catégories */}
-            <TabsContent value="categories" className="py-4">
-              <div className="space-y-6">
-                {/* Ajouter une catégorie */}
-                <div className="space-y-2">
-                  <Label>Ajouter une catégorie</Label>
-                  <div className="flex gap-2">
-                    <Input
-                      placeholder="Nom de la catégorie"
-                      value={newCategory}
-                      onChange={(e) => setNewCategory(e.target.value)}
-                    />
-                    <Button type="button" onClick={addCategory} disabled={isLoading || !newCategory.trim()}>
-                      <Plus className="h-4 w-4 mr-1" />
-                      Ajouter
-                    </Button>
-                  </div>
+          {/* ── Devise ── */}
+          {currentTab === "currency" && (
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <Label>Devise du projet</Label>
+                <Select value={formData.currency} onValueChange={v => setFormData({ ...formData, currency: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {CURRENCIES.map(c => <SelectItem key={c.code} value={c.code}>{c.symbol} – {c.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>1 € = (CFA)</Label>
+                  <Input type="number" min="0" step="0.01" placeholder="655.957" value={eurToCfa} onChange={e => setEurToCfa(e.target.value)} />
                 </div>
-
-                {/* Ajouter une sous-catégorie */}
-                <div className="space-y-2">
-                  <Label>Ajouter une sous-catégorie</Label>
-                  <div className="grid grid-cols-2 gap-2">
-                    <Select
-                      value={selectedCategoryForSub?.toString() || ""}
-                      onValueChange={(value) => setSelectedCategoryForSub(Number(value))}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Sélectionner une catégorie" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {categories
-                          .filter((cat) => cat.level === 1)
-                          .map((cat) => (
-                            <SelectItem key={cat.id} value={cat.id!.toString()}>
-                              {cat.name}
-                            </SelectItem>
-                          ))}
-                      </SelectContent>
-                    </Select>
-                    <div className="flex gap-2">
-                      <Input
-                        placeholder="Nom de la sous-catégorie"
-                        value={newSubcategory}
-                        onChange={(e) => setNewSubcategory(e.target.value)}
-                      />
-                      <Button
-                        type="button"
-                        onClick={addSubcategory}
-                        disabled={isLoading || !newSubcategory.trim() || !selectedCategoryForSub}
-                      >
-                        <Plus className="h-4 w-4 mr-1" />
-                      </Button>
-                    </div>
-                  </div>
+                <div className="space-y-1.5">
+                  <Label>1 € = (USD)</Label>
+                  <Input type="number" min="0" step="0.01" placeholder="1.08" value={eurToUsd} onChange={e => setEurToUsd(e.target.value)} />
                 </div>
+              </div>
+              <button
+                onClick={handleSaveProject} disabled={isLoading}
+                className={`w-full h-11 rounded-xl font-medium text-sm flex items-center justify-center gap-2 transition-all ${
+                  savedOk ? "bg-green-500 text-white" : "bg-primary text-primary-foreground hover:bg-primary/90"
+                }`}
+              >
+                {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : savedOk ? "✓ Enregistré" : <><Save className="h-4 w-4" /> Enregistrer</>}
+              </button>
+            </div>
+          )}
 
-                {/* Liste des catégories et sous-catégories */}
-                <div className="space-y-4">
-                  <Label>Catégories existantes</Label>
-                  <div className="space-y-3">
-                    {categories
-                      .filter((cat) => cat.level === 1)
-                      .map((mainCat) => (
-                        <div key={mainCat.id} className="border rounded-md p-3">
-                          <div className="flex justify-between items-center">
-                            <div className="font-medium">{mainCat.name}</div>
-                          </div>
-                          <div className="mt-2 pl-4 space-y-1">
-                            {categories
-                              .filter((subCat) => subCat.parent_id === mainCat.id)
-                              .map((subCat) => (
-                                <div key={subCat.id} className="flex justify-between items-center py-1">
-                                  <div className="text-sm">{subCat.name}</div>
-                                </div>
-                              ))}
-                          </div>
-                        </div>
+          {/* ── Catégories ── */}
+          {currentTab === "categories" && (
+            <div className="space-y-6">
+              {/* Ajouter catégorie */}
+              <div className="space-y-1.5">
+                <Label>Nouvelle catégorie</Label>
+                <div className="flex gap-2">
+                  <Input placeholder="Nom…" value={newCategory} onChange={e => setNewCategory(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); void addCategory() } }} />
+                  <button onClick={() => void addCategory()} disabled={isLoading || !newCategory.trim()}
+                    className="px-4 h-10 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-40 flex items-center gap-1.5 flex-shrink-0">
+                    <Plus className="h-4 w-4" /> Ajouter
+                  </button>
+                </div>
+              </div>
+
+              {/* Ajouter sous-catégorie */}
+              <div className="space-y-1.5">
+                <Label>Nouvelle sous-catégorie</Label>
+                <div className="flex gap-2">
+                  <Select value={selectedCategoryForSub?.toString() ?? ""} onValueChange={v => setSelectedCategoryForSub(Number(v))}>
+                    <SelectTrigger className="flex-1"><SelectValue placeholder="Catégorie parente" /></SelectTrigger>
+                    <SelectContent>
+                      {categories.filter(c => c.level === 1).map(c => (
+                        <SelectItem key={c.id} value={c.id!.toString()}>{c.name}</SelectItem>
                       ))}
-                  </div>
+                    </SelectContent>
+                  </Select>
+                  <Input className="flex-1" placeholder="Nom…" value={newSubcategory} onChange={e => setNewSubcategory(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); void addSubcategory() } }} />
+                  <button onClick={() => void addSubcategory()} disabled={isLoading || !newSubcategory.trim() || !selectedCategoryForSub}
+                    className="px-3 h-10 rounded-xl bg-primary text-primary-foreground text-sm hover:bg-primary/90 disabled:opacity-40 flex items-center flex-shrink-0">
+                    <Plus className="h-4 w-4" />
+                  </button>
                 </div>
               </div>
-            </TabsContent>
 
-            {/* Onglet Utilisateurs */}
-            <TabsContent value="users" className="py-4">
-              <div className="space-y-4">
-                {/* Ajouter un utilisateur */}
-                <div className="space-y-2">
-                  <Label>Ajouter un utilisateur au projet</Label>
-                  <div className="grid grid-cols-3 gap-2">
-                    <Select
-                      value={newUserId ?? ""}
-                      onValueChange={(value) => {
-                        const selectedUser = allUsers.find((user) => user.id === value)
-                        if (selectedUser && !projectUsers.some((pu) => pu.id === value)) {
-                          setNewUserId(value)
-                        }
-                      }}
-                    >
-                      <SelectTrigger className="col-span-2">
-                        <SelectValue placeholder="Sélectionner un utilisateur" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {allUsers
-                          .filter((user) => !projectUsers.some((pu) => pu.id === user.id))
-                          .map((user) => (
-                            <SelectItem key={user.id} value={user.id}>
-                              {user.name}
-                            </SelectItem>
-                          ))}
-                      </SelectContent>
-                    </Select>
-                    <Button 
-                      onClick={addUserToProject} 
-                      disabled={!newUserId || isAddingUser}
-                    >
-                      {isAddingUser ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <>
-                          <Plus className="h-4 w-4 mr-1" />
-                          Ajouter
-                        </>
-                      )}
-                    </Button>
-                  </div>
-                </div>
-
-                {/* Liste des utilisateurs du projet */}
-                <div className="space-y-2">
-                  <Label>Utilisateurs actuels</Label>
-                  <div className="border rounded-md divide-y">
-                    {projectUsers.length === 0 ? (
-                      <p className="p-4 text-sm text-muted-foreground text-center">
-                        Aucun utilisateur dans ce projet
-                      </p>
-                    ) : (
-                      projectUsers.map((user) => (
-                        <div key={user.id} className="flex justify-between items-center p-3">
-                          <div className="flex items-center gap-3">
-                            <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
-                              <UserIcon className="h-4 w-4" />
-                            </div>
-                            <div>
-                              <p className="font-medium">{user.name}</p>
-                              <p className="text-sm text-muted-foreground">{user.role}</p>
-                            </div>
+              {/* Liste */}
+              <div className="space-y-2">
+                <Label>Catégories existantes</Label>
+                {categories.filter(c => c.level === 1).length === 0 ? (
+                  <p className="text-sm text-muted-foreground py-4 text-center">Aucune catégorie pour ce projet</p>
+                ) : (
+                  <div className="space-y-2">
+                    {categories.filter(c => c.level === 1).map(parent => (
+                      <div key={parent.id} className="border border-border rounded-xl overflow-hidden">
+                        <div className="px-4 py-2.5 bg-muted/40 font-medium text-sm">{parent.name}</div>
+                        {categories.filter(c => c.parent_id === parent.id).map(sub => (
+                          <div key={sub.id} className="flex items-center gap-2 px-4 py-2 border-t border-border/50">
+                            <span className="text-muted-foreground">└</span>
+                            <span className="text-sm flex-1">{sub.name}</span>
                           </div>
-                          <Button 
-                            variant="ghost" 
-                            size="sm"
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ── Utilisateurs ── */}
+          {currentTab === "users" && (
+            <div className="space-y-6">
+              {/* Ajouter un utilisateur */}
+              <div className="space-y-1.5">
+                <Label>Ajouter un membre</Label>
+                <div className="flex gap-2">
+                  <Select value={newUserId ?? ""} onValueChange={v => {
+                    if (!projectUsers.some(pu => pu.id === v)) setNewUserId(v)
+                  }}>
+                    <SelectTrigger className="flex-1"><SelectValue placeholder="Sélectionner un utilisateur" /></SelectTrigger>
+                    <SelectContent>
+                      {allUsers.filter(u => !projectUsers.some(pu => pu.id === u.id)).map(u => (
+                        <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <button onClick={addUserToProject} disabled={!newUserId || isAddingUser}
+                    className="px-4 h-10 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-40 flex items-center gap-1.5 flex-shrink-0">
+                    {isAddingUser ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Plus className="h-4 w-4" /> Ajouter</>}
+                  </button>
+                </div>
+              </div>
+
+              {/* Liste membres */}
+              <div className="space-y-1.5">
+                <Label>Membres actuels</Label>
+                {projectUsers.length === 0 ? (
+                  <p className="text-sm text-muted-foreground py-4 text-center bg-muted/30 rounded-xl">Aucun membre</p>
+                ) : (
+                  <div className="divide-y divide-border border border-border rounded-xl overflow-hidden">
+                    {projectUsers.map(user => (
+                      <div key={user.id} className="flex items-center gap-3 px-4 py-3">
+                        <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
+                          <UserIcon className="h-4 w-4 text-primary" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">{user.name}</p>
+                          <p className="text-xs text-muted-foreground capitalize">{user.role}</p>
+                        </div>
+                        {user.role !== "owner" && (
+                          <button
                             onClick={() => {
-                              if (user.role === 'owner') {
-                                toast({
-                                  title: "Propriétaire non retirable",
-                                  description: "Vous ne pouvez pas retirer le propriétaire du projet.",
-                                  variant: "destructive"
-                                })
-                                return
+                              if (user.role === "owner") {
+                                toast({ title: "Propriétaire non retirable", variant: "destructive" }); return
                               }
-                              removeUserFromProject(user.id)
+                              void removeUserFromProject(user.id)
                             }}
                             disabled={isRemovingUser === user.id}
+                            className="w-8 h-8 flex items-center justify-center rounded-xl hover:bg-red-50 dark:hover:bg-red-950/20 text-muted-foreground hover:text-red-500 transition-colors flex-shrink-0"
                           >
-                            {isRemovingUser === user.id ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                              <X className="h-4 w-4" />
-                            )}
-                          </Button>
-                        </div>
-                      ))
-                    )}
+                            {isRemovingUser === user.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <X className="h-4 w-4" />}
+                          </button>
+                        )}
+                      </div>
+                    ))}
                   </div>
-                </div>
+                )}
               </div>
-            </TabsContent>
-          </Tabs>
-        )}
-      </DialogContent>
-    </Dialog>
+            </div>
+          )}
+
+        </div>
+      )}
+    </div>
   )
 }

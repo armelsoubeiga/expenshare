@@ -121,5 +121,59 @@
   }
   body {
     @apply bg-background text-foreground;
+    -webkit-tap-highlight-color: transparent;
   }
+  /* Smooth scrolling */
+  html {
+    scroll-behavior: smooth;
+  }
+  /* Better touch targets */
+  button, a, [role="button"] {
+    touch-action: manipulation;
+  }
+}
+
+/* Slide-in animation for sub-pages */
+@keyframes slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.animate-slide-in {
+  animation: slide-in 0.22s ease-out;
+}
+
+.animate-slide-up {
+  animation: slide-up 0.22s ease-out;
+}
+
+.animate-fade-in {
+  animation: fade-in 0.18s ease-out;
+}
+
+/* Safe area for bottom nav on notched phones */
+.pb-safe {
+  padding-bottom: max(8px, env(safe-area-inset-bottom));
 }

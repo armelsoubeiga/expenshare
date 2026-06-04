@@ -1,16 +1,12 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Label } from "@/components/ui/label"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { KeyRound, User, Loader2 } from "lucide-react"
+import { useState, useEffect, useCallback, useRef } from "react"
+import { Loader2, Eye, EyeOff, ArrowLeft } from "lucide-react"
 import { useDatabase } from "@/hooks/use-database"
 import { DatabaseError } from "@/components/ui/database-error"
-import type { SupabaseDatabaseInstance } from "@/lib/database-supabase"
+import type { TursoDatabaseInstance } from "@/lib/database-turso"
 import type { User as StoredUser } from "@/lib/types"
+import { PinBoxes } from "./pin-boxes"
 
 interface PinAuthProps {
   onAuthSuccess: () => void
@@ -18,383 +14,304 @@ interface PinAuthProps {
 
 export function PinAuth({ onAuthSuccess }: PinAuthProps) {
   const { db, isLoading: dbLoading, isReady, error: dbError } = useDatabase()
-  const database = (db as SupabaseDatabaseInstance | null)
-  const [step, setStep] = useState<"check" | "setup-name" | "setup-pin" | "confirm-pin" | "login" | "pin-only">("check")
+  const database = db as TursoDatabaseInstance | null
+
+  const [step, setStep] = useState<"check" | "setup-name" | "setup-pin" | "confirm-pin" | "login">("check")
   const [userName, setUserName] = useState("")
   const [pin, setPin] = useState("")
   const [confirmPin, setConfirmPin] = useState("")
   const [loginUserName, setLoginUserName] = useState("")
   const [loginPin, setLoginPin] = useState("")
+  const [existingUsers, setExistingUsers] = useState<StoredUser[]>([])
   const [error, setError] = useState("")
   const [isLoading, setIsLoading] = useState(false)
-  const [existingUsers, setExistingUsers] = useState<StoredUser[]>([])
+  const [showPin, setShowPin] = useState(false)
+  const [pinAutoFocus, setPinAutoFocus] = useState(false)
+
+  // Ref pour le champ caché (sauvegarde navigateur)
+  const hiddenPasswordRef = useRef<HTMLInputElement>(null)
 
   const checkExistingUsers = useCallback(async () => {
-    if (!database || !database.isReady) {
-      console.log("[v0] Database not ready yet")
-      return
-    }
-
+    if (!database?.isReady) return
     try {
-      console.log("[v0] Checking existing users...")
       const users = await database.users.toArray()
-      console.log("[v0] Found users:", users.length)
       setExistingUsers(users)
-
-      if (users.length === 0) {
-        setStep("setup-name")
-      } else {
-        setStep("pin-only")
-      }
-    } catch (error: unknown) {
-      console.error("[v0] Error checking users:", error)
-      setError("Erreur lors de l'initialisation de la base de données")
+      setStep(users.length === 0 ? "setup-name" : "login")
+    } catch {
+      setError("Erreur lors de l'initialisation")
       setStep("setup-name")
     }
   }, [database])
 
   useEffect(() => {
-    if (isReady && database) {
-      void checkExistingUsers()
-    }
+    if (isReady && database) void checkExistingUsers()
   }, [isReady, database, checkExistingUsers])
 
-  const handleNameSubmit = async () => {
-    if (!userName.trim()) {
-      setError("Veuillez saisir votre nom")
-      return
+  // Sync le champ caché avec le PIN pour la sauvegarde navigateur
+  useEffect(() => {
+    if (hiddenPasswordRef.current) {
+      hiddenPasswordRef.current.value = loginPin
     }
-    // Vérifier unicité (casse respectée)
-    if (database && database.isReady) {
+  }, [loginPin])
+
+  const saveSession = (id: string | number | undefined, name: string) => {
+    const data = JSON.stringify({ id, name, loginTime: new Date().toISOString() })
+    localStorage.setItem("expenshare_current_user", data)
+    localStorage.setItem("expenshare_user", data)
+    sessionStorage.setItem("expenshare_auth", "true")
+  }
+
+  const handleNameSubmit = async (e?: React.FormEvent) => {
+    e?.preventDefault()
+    if (!userName.trim()) { setError("Veuillez saisir votre nom"); return }
+    if (database?.isReady) {
       const users = await database.users.toArray()
-      if (users.some((u) => u.name === userName)) {
-        setError("Ce nom d'utilisateur existe déjà")
-        return
-      }
+      if (users.some(u => u.name === userName)) { setError("Ce nom existe déjà"); return }
     }
     setError("")
+    setPin("")
     setStep("setup-pin")
+    setPinAutoFocus(true)
   }
 
-  const handlePinSubmit = () => {
-    if (pin.length !== 4 || !/^\d{4}$/.test(pin)) {
-      setError("Le code PIN doit contenir exactement 4 chiffres")
-      return
-    }
+  const handlePinSubmit = (e?: React.FormEvent) => {
+    e?.preventDefault()
+    if (pin.length !== 4 || !/^\d{4}$/.test(pin)) { setError("Le PIN doit contenir 4 chiffres"); return }
     setError("")
+    setConfirmPin("")
     setStep("confirm-pin")
+    setPinAutoFocus(true)
   }
 
-  const handleConfirmPin = async () => {
-    if (pin !== confirmPin) {
-      setError("Les codes PIN ne correspondent pas")
-      return
-    }
-
-    if (!database || !database.isReady) {
-      setError("Base de données non disponible")
-      return
-    }
-
+  const handleConfirmPin = async (e?: React.FormEvent) => {
+    e?.preventDefault()
+    if (pin !== confirmPin) { setError("Les PINs ne correspondent pas"); return }
+    if (!database?.isReady) { setError("Base de données non disponible"); return }
     setIsLoading(true)
     setError("")
-
     try {
-      // Vérifier unicité (casse respectée)
-      const users = await database.users.toArray()
-      if (users.some((u) => u.name === userName)) {
-        setIsLoading(false)
-        setError("Ce nom d'utilisateur existe déjà")
-        return
-      }
-      const hashedPin = btoa(pin + "salt_" + userName)
-      const userId = await database.users.add({
-        name: userName,
-        pin_hash: hashedPin,
-        created_at: new Date().toISOString(),
-      })
-      // Store current user in localStorage for session
-      localStorage.setItem(
-        "expenshare_current_user",
-        JSON.stringify({
-          id: userId,
-          name: userName,
-          loginTime: new Date().toISOString(),
-        }),
-      )
-      // Also store in expenshare_user for compatibility
-      localStorage.setItem(
-        "expenshare_user",
-        JSON.stringify({
-          id: userId,
-          name: userName,
-          loginTime: new Date().toISOString(),
-        }),
-      )
-      setTimeout(() => {
-        setIsLoading(false)
-        onAuthSuccess()
-      }, 500)
-    } catch (error: unknown) {
-      console.error('[PinAuth] Create user failed:', error)
+      const pinHash = btoa(pin + "salt_" + userName)
+      const userId = await database.users.add({ name: userName, pin_hash: pinHash, created_at: new Date().toISOString() })
+      saveSession(userId, userName)
+      setTimeout(onAuthSuccess, 400)
+    } catch (err) {
       setIsLoading(false)
-      const message = error instanceof Error ? error.message : "Erreur lors de la création du compte"
-      setError(message)
+      setError(err instanceof Error ? err.message : "Erreur lors de la création du compte")
     }
   }
 
-  const handleLogin = async () => {
-    if (!loginUserName.trim()) {
-      setError("Veuillez saisir votre nom d'utilisateur")
-      return
-    }
-    if (loginPin.length !== 4 || !/^\d{4}$/.test(loginPin)) {
-      setError("Le code PIN doit contenir exactement 4 chiffres")
-      return
-    }
-    if (!database || !database.isReady) {
-      setError("Base de données non disponible")
-      return
-    }
+  const handleLogin = async (e?: React.FormEvent) => {
+    e?.preventDefault()
+    if (!loginUserName.trim()) { setError("Saisissez votre nom"); return }
+    if (loginPin.length !== 4 || !/^\d{4}$/.test(loginPin)) { setError("PIN invalide (4 chiffres requis)"); return }
+    if (!database?.isReady) { setError("Base de données non disponible"); return }
     setIsLoading(true)
     setError("")
     try {
-      // Recherche par nom exact (casse respectée)
       const users = await database.users.toArray()
-      const user = users.find((u) => u.name === loginUserName)
-      if (!user) {
+      const user = users.find(u => u.name.toLowerCase() === loginUserName.trim().toLowerCase())
+      if (!user || btoa(loginPin + "salt_" + user.name) !== user.pin_hash) {
         setIsLoading(false)
-        setError("Nom d'utilisateur ou PIN incorrect")
-        return
-      }
-      const hashedLoginPin = btoa(loginPin + "salt_" + user.name)
-      if (hashedLoginPin !== user.pin_hash) {
-        setIsLoading(false)
-        setError("Nom d'utilisateur ou PIN incorrect")
+        setError("Nom ou PIN incorrect")
         setLoginPin("")
+        setPinAutoFocus(true)
         return
       }
-      // Store current user in localStorage for session
-      localStorage.setItem(
-        "expenshare_current_user",
-        JSON.stringify({
-          id: user.id,
-          name: user.name,
-          loginTime: new Date().toISOString(),
-        }),
-      )
-      localStorage.setItem(
-        "expenshare_user",
-        JSON.stringify({
-          id: user.id,
-          name: user.name,
-          loginTime: new Date().toISOString(),
-        }),
-      )
+      saveSession(user.id, user.name)
       setIsLoading(false)
       onAuthSuccess()
-    } catch (error: unknown) {
-      console.error('[PinAuth] Login failed:', error)
+    } catch (err) {
       setIsLoading(false)
-      const message = error instanceof Error ? error.message : "Erreur lors de la connexion"
-      setError(message)
+      setError(err instanceof Error ? err.message : "Erreur lors de la connexion")
     }
   }
-
-  const renderPinInput = (value: string, onChange: (value: string) => void, placeholderLabel: string) => (
-    <div className="flex gap-2 justify-center">
-      {[0, 1, 2, 3].map((index) => (
-        <Input
-          key={index}
-          type="password"
-          maxLength={1}
-          className="w-12 h-12 text-center text-lg font-mono"
-          value={value[index] || ""}
-          onChange={(e) => {
-            const newValue = value.split("")
-            newValue[index] = e.target.value
-            onChange(newValue.join(""))
-
-            // Auto-focus next input
-            if (e.target.value && index < 3) {
-              const nextInput = e.target.parentElement?.children[index + 1] as HTMLInputElement
-              nextInput?.focus()
-            }
-          }}
-          onKeyDown={(e) => {
-            // Handle backspace
-            if (e.key === "Backspace" && !value[index] && index > 0) {
-              const target = e.target as HTMLInputElement
-              const prevInput = target.parentElement?.children[index - 1] as HTMLInputElement
-              prevInput?.focus()
-            }
-            // Handle enter
-            if (e.key === "Enter" && value.length === 4) {
-              if (step === "pin-only") handleLogin()
-            }
-          }}
-          aria-label={`${placeholderLabel} caractère ${index + 1}`}
-        />
-      ))}
-    </div>
-  )
 
   if (dbError) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-4">
-        <div className="w-full max-w-md">
-          <DatabaseError error={dbError} />
-        </div>
+        <div className="w-full max-w-md"><DatabaseError error={dbError} /></div>
       </div>
     )
   }
 
   if (step === "check" || dbLoading || !isReady) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center p-4">
+      <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
-          <p className="text-sm text-muted-foreground">
-            {dbLoading ? "Initialisation de la base de données..." : "Chargement..."}
-          </p>
-          {!dbLoading && !isReady && (
-            <button
-              className="text-xs underline text-muted-foreground"
-              onClick={() => window.location.reload()}
-            >
-              Réessayer
-            </button>
-          )}
+          <div className="w-12 h-12 rounded-2xl bg-primary flex items-center justify-center">
+            <span className="text-primary-foreground font-bold text-base">ES</span>
+          </div>
+          <Loader2 className="h-5 w-5 animate-spin text-primary" />
         </div>
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-800 flex items-center justify-center p-4">
-      <Card className="w-full max-w-md">
-        <CardHeader className="text-center">
-          <div className="mx-auto mb-4 w-12 h-12 bg-primary rounded-full flex items-center justify-center">
-            {step === "setup-name" ? (
-              <User className="w-6 h-6 text-primary-foreground" />
-            ) : (
-              <KeyRound className="w-6 h-6 text-primary-foreground" />
-            )}
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 dark:from-slate-950 dark:to-slate-900 flex items-center justify-center p-4">
+      <div className="w-full max-w-sm">
+        {/* Logo */}
+        <div className="flex flex-col items-center mb-8">
+          <div className="w-16 h-16 rounded-2xl bg-primary flex items-center justify-center mb-4 shadow-lg shadow-primary/25">
+            <span className="text-primary-foreground font-bold text-xl">ES</span>
           </div>
-          <CardTitle className="text-2xl">
-            {step === "setup-name"
-              ? "Bienvenue sur ExpenseShare"
-              : step === "pin-only"
-                ? "Connexion ExpenseShare"
-                : `Configuration - ${userName}`}
-          </CardTitle>
-          <CardDescription>
-            {step === "setup-name" && "Créez votre compte"}
-            {step === "setup-pin" && "Créez votre code PIN de sécurité"}
-            {step === "confirm-pin" && "Confirmez votre code PIN"}
-            {step === "pin-only" && "Saisissez votre code PIN pour vous connecter"}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
+          <h1 className="text-2xl font-bold tracking-tight">ExpenseShare</h1>
+          <p className="text-sm text-muted-foreground mt-1">Gestion de dépenses partagées</p>
+        </div>
+
+        <div className="bg-card border border-border rounded-3xl shadow-xl p-6 space-y-6">
+          {/* Erreur */}
           {error && (
-            <Alert variant="destructive">
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
+            <div className="p-3 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 rounded-xl">
+              <p className="text-sm text-red-600 dark:text-red-400 text-center">{error}</p>
+            </div>
           )}
 
+          {/* ── Saisie du nom (nouveau compte) ── */}
           {step === "setup-name" && (
-            <>
+            <form onSubmit={handleNameSubmit} className="space-y-5">
+              <div className="text-center">
+                <h2 className="font-semibold text-lg">Bienvenue !</h2>
+                <p className="text-sm text-muted-foreground mt-1">Créez votre compte pour commencer</p>
+              </div>
               <div className="space-y-2">
-                <Label htmlFor="name">Votre nom</Label>
-                <Input
-                  id="name"
-                  placeholder="Entrez votre nom"
+                <label className="text-sm font-medium">Votre nom</label>
+                <input
+                  type="text"
+                  name="username"
+                  autoComplete="username"
+                  placeholder="Ex: Marie, Jean…"
                   value={userName}
-                  onChange={(e) => setUserName(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleNameSubmit()}
+                  onChange={e => setUserName(e.target.value)}
+                  autoFocus
+                  className="w-full h-12 px-4 rounded-xl border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all"
                 />
               </div>
-              <Button onClick={handleNameSubmit} className="w-full">
+              <button type="submit" className="w-full h-12 bg-primary text-primary-foreground rounded-xl font-semibold hover:bg-primary/90 transition-colors">
                 Continuer
-              </Button>
+              </button>
               {existingUsers.length > 0 && (
-                <Button variant="outline" onClick={() => setStep("pin-only")} className="w-full">
-                  J&rsquo;ai déjà un compte
-                </Button>
+                <button type="button" onClick={() => setStep("login")} className="w-full h-11 border border-border rounded-xl text-sm text-muted-foreground hover:bg-muted transition-colors">
+                  J'ai déjà un compte
+                </button>
               )}
-            </>
+            </form>
           )}
 
+          {/* ── Créer PIN ── */}
           {step === "setup-pin" && (
-            <>
-              <div className="space-y-2">
-                <Label className="text-center block">Créez votre code PIN (4 chiffres)</Label>
-                {renderPinInput(pin, setPin, "Code PIN")}
+            <form onSubmit={handlePinSubmit} className="space-y-5">
+              <button type="button" onClick={() => { setStep("setup-name"); setPin("") }} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">
+                <ArrowLeft className="h-4 w-4" /> Retour
+              </button>
+              <div className="text-center">
+                <h2 className="font-semibold text-lg">Créez votre PIN</h2>
+                <p className="text-sm text-muted-foreground mt-1">4 chiffres pour sécuriser votre compte</p>
               </div>
-              <Button onClick={handlePinSubmit} className="w-full" disabled={pin.length !== 4}>
+              <PinBoxes value={pin} onChange={setPin} showPin={showPin} autoFocus={pinAutoFocus} onComplete={handlePinSubmit} />
+              <button type="button" onClick={() => setShowPin(v => !v)} className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors mx-auto">
+                {showPin ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                {showPin ? "Masquer" : "Afficher"} le PIN
+              </button>
+              <button type="submit" disabled={pin.length !== 4} className="w-full h-12 bg-primary text-primary-foreground rounded-xl font-semibold disabled:opacity-40 hover:bg-primary/90 transition-colors">
                 Continuer
-              </Button>
-            </>
+              </button>
+            </form>
           )}
 
+          {/* ── Confirmer PIN ── */}
           {step === "confirm-pin" && (
-            <>
-              <div className="space-y-2">
-                <Label className="text-center block">Confirmez votre code PIN</Label>
-                {renderPinInput(confirmPin, setConfirmPin, "Confirmer PIN")}
+            <form onSubmit={handleConfirmPin} className="space-y-5">
+              <button type="button" onClick={() => { setStep("setup-pin"); setConfirmPin("") }} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">
+                <ArrowLeft className="h-4 w-4" /> Retour
+              </button>
+              <div className="text-center">
+                <h2 className="font-semibold text-lg">Confirmez votre PIN</h2>
+                <p className="text-sm text-muted-foreground mt-1">Resaisissez votre PIN pour confirmer</p>
               </div>
-              <Button onClick={handleConfirmPin} className="w-full" disabled={confirmPin.length !== 4 || isLoading}>
-                {isLoading ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Création...
-                  </>
-                ) : (
-                  "Créer mon compte"
-                )}
-              </Button>
-            </>
+              <PinBoxes value={confirmPin} onChange={setConfirmPin} showPin={showPin} autoFocus={pinAutoFocus} onComplete={handleConfirmPin} />
+              <button
+                type="submit"
+                disabled={confirmPin.length !== 4 || isLoading}
+                className="w-full h-12 bg-primary text-primary-foreground rounded-xl font-semibold disabled:opacity-40 hover:bg-primary/90 transition-colors flex items-center justify-center gap-2"
+              >
+                {isLoading ? <><Loader2 className="h-4 w-4 animate-spin" />Création…</> : "Créer mon compte"}
+              </button>
+            </form>
           )}
 
-          {step === "pin-only" && (
-            <>
-              <div className="space-y-2 flex flex-col items-center">
-                <Label htmlFor="login-username" className="text-center block w-56 mx-auto">Nom d&rsquo;utilisateur</Label>
-                <div className="flex justify-center w-full">
-                  <Input
-                    id="login-username"
-                    placeholder="Nom d'utilisateur"
-                    value={loginUserName}
-                    onChange={e => setLoginUserName(e.target.value)}
-                    onKeyDown={e => e.key === "Enter" && handleLogin()}
-                    autoFocus
-                    className="w-56 max-w-full text-center px-2 py-2 rounded-md border border-input bg-background focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary"
-                    style={{ maxWidth: 224 }}
-                  />
+          {/* ── Connexion ── */}
+          {step === "login" && (
+            <form onSubmit={handleLogin} className="space-y-5" autoComplete="on">
+              <div className="text-center">
+                <h2 className="font-semibold text-lg">Connexion</h2>
+                <p className="text-sm text-muted-foreground mt-1">Entrez votre nom et votre PIN</p>
+              </div>
+
+              {/* Saisie du nom */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Nom d'utilisateur</label>
+                <input
+                  type="text"
+                  name="username"
+                  autoComplete="username"
+                  placeholder="Votre nom"
+                  value={loginUserName}
+                  onChange={e => setLoginUserName(e.target.value)}
+                  autoFocus
+                  className="w-full h-12 px-4 rounded-xl border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all"
+                />
+              </div>
+
+              {/* PIN */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-sm font-medium">Code PIN</label>
+                  <button type="button" onClick={() => setShowPin(v => !v)} className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors">
+                    {showPin ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                    {showPin ? "Masquer" : "Afficher"}
+                  </button>
                 </div>
-                <Label className="text-center block w-56 mx-auto mt-4">Code PIN</Label>
-                {renderPinInput(loginPin, setLoginPin, "Code PIN")}
+
+                {/* Champ caché pour la sauvegarde navigateur */}
+                <input
+                  ref={hiddenPasswordRef}
+                  type="password"
+                  name="password"
+                  autoComplete="current-password"
+                  defaultValue=""
+                  onChange={e => {
+                    const v = e.target.value.replace(/\D/g, "").slice(0, 4)
+                    if (v.length > 0) { setLoginPin(v); setPinAutoFocus(false) }
+                  }}
+                  className="sr-only"
+                  tabIndex={-1}
+                />
+
+                <PinBoxes
+                  value={loginPin}
+                  onChange={setLoginPin}
+                  showPin={showPin}
+                  autoFocus={pinAutoFocus}
+                  onComplete={() => handleLogin()}
+                />
               </div>
-              <Button onClick={handleLogin} className="w-full" disabled={loginPin.length !== 4 || !loginUserName.trim() || isLoading}>
-                {isLoading ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Connexion...
-                  </>
-                ) : (
-                  "Se connecter"
-                )}
-              </Button>
-              <div className="text-center mt-2 mb-2">
-                <span className="text-sm text-muted-foreground">ou</span>
-              </div>
-              <Button variant="outline" onClick={() => setStep("setup-name")} className="w-full">
+
+              <button
+                type="submit"
+                disabled={loginPin.length !== 4 || !loginUserName.trim() || isLoading}
+                className="w-full h-12 bg-primary text-primary-foreground rounded-xl font-semibold disabled:opacity-40 hover:bg-primary/90 transition-colors flex items-center justify-center gap-2"
+              >
+                {isLoading ? <><Loader2 className="h-4 w-4 animate-spin" />Connexion…</> : "Se connecter"}
+              </button>
+
+              <button type="button" onClick={() => { setStep("setup-name"); setLoginUserName(""); setLoginPin("") }} className="w-full h-11 border border-border rounded-xl text-sm text-muted-foreground hover:bg-muted transition-colors">
                 Créer un nouveau compte
-              </Button>
-            </>
+              </button>
+            </form>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </div>
   )
 }

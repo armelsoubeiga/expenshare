@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Trash2, Shield } from "lucide-react"
+import { Trash2, Shield, ShieldCheck } from "lucide-react"
 import type { User } from "@/lib/types"
 
 type ManagedUser = Omit<User, "id"> & {
@@ -35,6 +35,7 @@ export function UserManagement({ isOpen, onClose }: UserManagementProps) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [confirmUserId, setConfirmUserId] = useState<string | null>(null)
+  const [promoteUserId, setPromoteUserId] = useState<string | null>(null)
 
   const loadUsers = useCallback(async () => {
     try {
@@ -124,6 +125,24 @@ export function UserManagement({ isOpen, onClose }: UserManagementProps) {
     [adminId, canManage, refresh],
   )
 
+  const handlePromoteAdmin = useCallback(
+    async (userId: string) => {
+      if (!canManage) return
+      setLoading(true)
+      setError(null)
+      try {
+        await db.settings.put({ key: 'admin_user_id', value: userId })
+        await refresh()
+        setPromoteUserId(null)
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : "Erreur lors de la promotion")
+      } finally {
+        setLoading(false)
+      }
+    },
+    [canManage, refresh],
+  )
+
   const handleDelete = useCallback(
     (userId: string) => {
       if (!canManage) {
@@ -171,7 +190,18 @@ export function UserManagement({ isOpen, onClose }: UserManagementProps) {
                     <span className="text-xs px-2 py-0.5 rounded bg-muted text-muted-foreground">vous</span>
                   ) : null}
               </div>
-              <div>
+              <div className="flex items-center gap-2">
+                {canManage && !isAdminUser && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={loading}
+                    onClick={() => setPromoteUserId(user.id)}
+                    title="Promouvoir comme admin"
+                  >
+                    <ShieldCheck className="w-4 h-4 mr-1 text-green-600" /> Admin
+                  </Button>
+                )}
                 <Button
                   variant="destructive"
                   size="sm"
@@ -189,7 +219,27 @@ export function UserManagement({ isOpen, onClose }: UserManagementProps) {
           <Button variant="outline" onClick={onClose}>Fermer</Button>
         </div>
       </DialogContent>
-      {/* Confirmation dialog */}
+      {/* Dialog promotion admin */}
+      <ConfirmDialog open={!!promoteUserId} onOpenChange={(open) => !open && setPromoteUserId(null)}>
+        <ConfirmDialogContent>
+          <ConfirmDialogHeader>
+            <ConfirmDialogTitle>Transférer les droits admin</ConfirmDialogTitle>
+            <ConfirmDialogDescription>
+              Cet utilisateur deviendra le nouvel admin et bénéficiera de tous les droits d'administration. Vous conserverez vos accès normaux.
+            </ConfirmDialogDescription>
+          </ConfirmDialogHeader>
+          <ConfirmDialogFooter>
+            <AlertDialogCancel onClick={() => setPromoteUserId(null)}>Annuler</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={async () => { if (promoteUserId) await handlePromoteAdmin(promoteUserId) }}
+            >
+              Confirmer
+            </AlertDialogAction>
+          </ConfirmDialogFooter>
+        </ConfirmDialogContent>
+      </ConfirmDialog>
+
+      {/* Confirmation suppression */}
       <ConfirmDialog open={!!confirmUserId} onOpenChange={(open) => !open && setConfirmUserId(null)}>
         <ConfirmDialogContent>
           <ConfirmDialogHeader>

@@ -1,31 +1,63 @@
+# Dépendances
 node_modules/
+
+# Build / output
 .next/
 out/
 build/
 dist/
+
+# Déploiement
 .vercel/
-.env*
+
+# Variables d'environnement et secrets
+.env
+.env.*
+*.local
+Keys.txt
+keys.txt
+secrets.txt
+credentials.json
+service-account.json
+
+# TypeScript
 *.tsbuildinfo
 next-env.d.ts
+
+# Logs
 *.log
-*.bak
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Base de données locale
 *.db
-expenseshare.db
 *.sqlite
 *.sqlite3
+expenseshare.db
+/.data/
+
+# Archives
 *.tgz
 *.zip
 *.tar
+*.tar.gz
+
+# Éditeurs
 *.swp
 *.swo
 *.tmp
-coverage/
-*.local
-*.DS_Store
-*.idea/
+*.bak
+.idea/
 .vscode/
+*.DS_Store
+.DS_Store
+
+# Tests
+coverage/
 test-results/
-/.data/
+
+# Documentation et scripts de migration (non nécessaires en prod)
 scripts/
 README-SQLITE.md
 TESTS.md

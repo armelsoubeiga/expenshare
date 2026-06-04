@@ -20,9 +20,10 @@ interface TransactionFormProps {
   isOpen: boolean
   onClose: () => void
   onSuccess: () => void
+  preselectedProjectId?: number
 }
 
-export function TransactionForm({ isOpen, onClose, onSuccess }: TransactionFormProps) {
+export function TransactionForm({ isOpen, onClose, onSuccess, preselectedProjectId }: TransactionFormProps) {
   const { toast } = useToast()
   const { db } = useDatabase()
   const [projects, setProjects] = useState<ProjectWithId[]>([])
@@ -75,7 +76,7 @@ export function TransactionForm({ isOpen, onClose, onSuccess }: TransactionFormP
         throw new Error("Identifiant utilisateur invalide")
       }
       const userProjects = await db.getUserProjects(userId)
-      setProjects(userProjects)
+      setProjects((userProjects as unknown as ProjectWithId[]) ?? [])
     } catch (error) {
       console.error("Failed to load projects:", error)
     }
@@ -115,6 +116,10 @@ export function TransactionForm({ isOpen, onClose, onSuccess }: TransactionFormP
     if (isOpen) {
       loadUserProjects()
       resetForm()
+      if (preselectedProjectId) {
+        setFormData(prev => ({ ...prev, projectId: String(preselectedProjectId) }))
+        loadProjectCategories(preselectedProjectId)
+      }
     }
   }, [isOpen, db, loadUserProjects, resetForm])
 
@@ -182,7 +187,7 @@ export function TransactionForm({ isOpen, onClose, onSuccess }: TransactionFormP
           // On stocke l'URL publique du média (déjà uploadé via MediaUpload)
           await db.notes.add({
             transaction_id: transactionId,
-            content_type: media.type === "image" ? "image" : media.type === "audio" ? "audio" : "text",
+            content_type: media.type === "image" ? "image" : media.type === "audio" ? "audio" : media.type === "video" ? "video" : "text",
             content: media.url, // URL publique
             file_path: media.name,
           } as Note)
