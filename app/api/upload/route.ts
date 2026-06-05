@@ -1,14 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3'
 
-const s3 = new S3Client({
-  endpoint: process.env.B2_ENDPOINT!,
-  region: 'us-east-005',
-  credentials: {
-    accessKeyId: process.env.B2_KEY_ID!,
-    secretAccessKey: process.env.B2_APPLICATION_KEY!,
-  },
-})
+function getS3Client() {
+  const endpoint = process.env.B2_ENDPOINT
+  const accessKeyId = process.env.B2_KEY_ID
+  const secretAccessKey = process.env.B2_APPLICATION_KEY
+  if (!endpoint || !accessKeyId || !secretAccessKey) {
+    throw new Error('B2 storage not configured (missing B2_ENDPOINT, B2_KEY_ID or B2_APPLICATION_KEY)')
+  }
+  return new S3Client({
+    endpoint,
+    region: 'us-east-005',
+    credentials: { accessKeyId, secretAccessKey },
+    forcePathStyle: true,
+  })
+}
 
 const BUCKET = process.env.B2_BUCKET_NAME!
 
@@ -33,6 +39,7 @@ export async function POST(req: NextRequest) {
     const ext = body.extension || mimeType.split('/')[1] || 'bin'
     const key = `${body.content_type}/${crypto.randomUUID()}.${ext}`
 
+    const s3 = getS3Client()
     await s3.send(new PutObjectCommand({
       Bucket: BUCKET,
       Key: key,

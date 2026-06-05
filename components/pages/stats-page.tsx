@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useCallback } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
-import { BarChart3, TrendingUp, TrendingDown, DollarSign, ArrowRight, ArrowLeft, Link2, Filter, X } from "lucide-react"
+import { BarChart3, TrendingUp, TrendingDown, DollarSign, ArrowRight, Link2, Filter, X, ChevronDown } from "lucide-react"
 import { useUserProjects, useProjectStats } from "@/hooks/use-database"
 import { normalizeCurrencyCode } from "@/lib/utils"
 import { CustomPieChart } from "@/components/charts/pie-chart"
@@ -253,6 +253,30 @@ export function StatsPage() {
     return entries.map(([name, value], idx) => ({ name, value, color: colors[idx % colors.length] }))
   }, [stats, displayCurrency])
 
+  // Transferts : totaux et liste combinée triée par date
+  const { totalIn, totalOut, effectiveBudget, effectiveExpenses, effectiveBalance } = useMemo(() => {
+    const getAmt = (t: any) => {
+      if (displayCurrency === 'CFA') return Number(t.amount_cfa ?? 0)
+      if (displayCurrency === 'USD') return Number(t.amount_usd ?? 0)
+      return Number(t.amount_eur ?? 0)
+    }
+    const tin = transfers.incoming.reduce((s, t) => s + getAmt(t), 0)
+    const tout = transfers.outgoing.reduce((s, t) => s + getAmt(t), 0)
+    const effBudget = stats.totalBudgets + tin
+    const effExpenses = stats.totalExpenses + tout
+    return { totalIn: tin, totalOut: tout, effectiveBudget: effBudget, effectiveExpenses: effExpenses, effectiveBalance: effBudget - effExpenses }
+  }, [transfers, displayCurrency, stats.totalBudgets, stats.totalExpenses])
+
+  const allTransfers = useMemo(() => {
+    const incoming = transfers.incoming.map(t => ({ ...t, isIncoming: true as const }))
+    const outgoing = transfers.outgoing.map(t => ({ ...t, isIncoming: false as const }))
+    return [...incoming, ...outgoing].sort((a, b) =>
+      new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    )
+  }, [transfers])
+
+  const TRANSFER_PREVIEW = 4
+
   if (projectsLoading) {
     return (
       <div className="p-4 space-y-6">
@@ -284,29 +308,27 @@ export function StatsPage() {
 
   return (
     <div className="p-3 md:p-4 space-y-4 md:space-y-6">
-      {/* Header + sélecteur projet sur une ligne */}
-      <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-        <div className="flex-1 min-w-0">
+      {/* Header + sélecteur projet */}
+      <div className="space-y-3">
+        <div>
           <h2 className="text-xl md:text-2xl font-bold text-foreground">Projets</h2>
           <p className="text-sm text-muted-foreground hidden sm:block">Analyses détaillées par projet</p>
         </div>
-        <div className="w-full sm:w-64 flex-shrink-0">
-          <Select value={selectedProjectId} onValueChange={setSelectedProjectId}>
-            <SelectTrigger className="h-9">
-              <SelectValue placeholder="Sélectionnez un projet" />
-            </SelectTrigger>
-            <SelectContent>
-              {projects.map((project) => (
-                <SelectItem key={project.id} value={project.id.toString()}>
-                  <div className="flex items-center gap-2">
-                    <span>{project.icon}</span>
-                    <span className="truncate max-w-[140px]">{project.name}</span>
-                  </div>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        <Select value={selectedProjectId} onValueChange={setSelectedProjectId}>
+          <SelectTrigger className="w-full h-11 text-sm font-medium rounded-xl border-2 px-4">
+            <SelectValue placeholder="Sélectionnez un projet" />
+          </SelectTrigger>
+          <SelectContent>
+            {projects.map((project) => (
+              <SelectItem key={project.id} value={project.id.toString()}>
+                <div className="flex items-center gap-2">
+                  <span>{project.icon}</span>
+                  <span className="truncate">{project.name}</span>
+                </div>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       {/* Project Statistics */}
@@ -314,40 +336,40 @@ export function StatsPage() {
         <>
           {/* Project Indicators — scroll horizontal sur mobile */}
           <div className="flex gap-3 overflow-x-auto pb-1 md:grid md:grid-cols-3 md:gap-4 -mx-3 px-3 md:mx-0 md:px-0">
-            <Card className="bg-red-50 dark:bg-red-950/20 flex-shrink-0 w-48 md:w-auto">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 p-3 md:p-4">
+            <Card className="bg-red-50 dark:bg-red-950/20 flex-shrink-0 w-48 md:w-auto py-3 gap-2">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 p-2 md:p-3">
                 <CardTitle className="text-xs md:text-sm font-medium">Dépenses</CardTitle>
                 <TrendingDown className="h-4 w-4 text-red-500 flex-shrink-0" />
               </CardHeader>
-              <CardContent className="p-3 md:p-4 pt-0">
+              <CardContent className="p-2 md:p-3 pt-0">
                 <div className="text-lg md:text-2xl font-bold text-red-600 leading-tight">
-                  {statsLoading ? "..." : formatAmount(stats.totalExpenses)}
+                  {statsLoading ? "..." : formatAmount(effectiveExpenses)}
                 </div>
                 <p className="text-xs text-muted-foreground truncate mt-0.5">{selectedProject?.name}</p>
               </CardContent>
             </Card>
 
-            <Card className="bg-blue-50 dark:bg-blue-950/20 flex-shrink-0 w-48 md:w-auto">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 p-3 md:p-4">
+            <Card className="bg-blue-50 dark:bg-blue-950/20 flex-shrink-0 w-48 md:w-auto py-3 gap-2">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 p-2 md:p-3">
                 <CardTitle className="text-xs md:text-sm font-medium">Budgets</CardTitle>
                 <TrendingUp className="h-4 w-4 text-blue-500 flex-shrink-0" />
               </CardHeader>
-              <CardContent className="p-3 md:p-4 pt-0">
+              <CardContent className="p-2 md:p-3 pt-0">
                 <div className="text-lg md:text-2xl font-bold text-blue-600 leading-tight">
-                  {statsLoading ? "..." : formatAmount(stats.totalBudgets)}
+                  {statsLoading ? "..." : formatAmount(effectiveBudget)}
                 </div>
                 <p className="text-xs text-muted-foreground mt-0.5">Fonds disponibles</p>
               </CardContent>
             </Card>
 
-            <Card className={`flex-shrink-0 w-48 md:w-auto ${stats.balance >= 0 ? "bg-green-50 dark:bg-green-950/20" : "bg-red-50 dark:bg-red-950/20"}`}>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 p-3 md:p-4">
+            <Card className={`flex-shrink-0 w-48 md:w-auto py-3 gap-2 ${effectiveBalance >= 0 ? "bg-green-50 dark:bg-green-950/20" : "bg-red-50 dark:bg-red-950/20"}`}>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 p-2 md:p-3">
                 <CardTitle className="text-xs md:text-sm font-medium">Solde</CardTitle>
-                <DollarSign className={`h-4 w-4 flex-shrink-0 ${stats.balance >= 0 ? "text-green-500" : "text-red-500"}`} />
+                <DollarSign className={`h-4 w-4 flex-shrink-0 ${effectiveBalance >= 0 ? "text-green-500" : "text-red-500"}`} />
               </CardHeader>
-              <CardContent className="p-3 md:p-4 pt-0">
-                <div className={`text-lg md:text-2xl font-bold leading-tight ${getBalanceColor(stats.balance)}`}>
-                  {statsLoading ? "..." : formatAmount(stats.balance)}
+              <CardContent className="p-2 md:p-3 pt-0">
+                <div className={`text-lg md:text-2xl font-bold leading-tight ${getBalanceColor(effectiveBalance)}`}>
+                  {statsLoading ? "..." : formatAmount(effectiveBalance)}
                 </div>
                 <p className="text-xs text-muted-foreground mt-0.5">Budget − Dépenses</p>
               </CardContent>
@@ -355,80 +377,66 @@ export function StatsPage() {
           </div>
 
           {/* Section Transferts de budget inter-projets */}
-          {(() => {
-            const totalIn = transfers.incoming.reduce((s, t) => s + Number(displayCurrency === 'CFA' ? t.amount_cfa : displayCurrency === 'USD' ? t.amount_usd : t.amount_eur), 0)
-            const totalOut = transfers.outgoing.reduce((s, t) => s + Number(displayCurrency === 'CFA' ? t.amount_cfa : displayCurrency === 'USD' ? t.amount_usd : t.amount_eur), 0)
-            const effectiveBudget = stats.totalBudgets + totalIn - totalOut
-            const effectiveBalance = effectiveBudget - stats.totalExpenses
-            const hasTransfers = transfers.incoming.length > 0 || transfers.outgoing.length > 0
-
-            return (
-              <Card className={`border-2 ${hasTransfers ? 'border-dashed border-primary/40' : 'border-dashed border-border'}`}>
-                <CardHeader className="pb-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Link2 className="h-4 w-4 text-primary" />
-                      <CardTitle className="text-sm">Partage de budget inter-projets</CardTitle>
-                    </div>
+          <Card className={`border-2 border-dashed ${allTransfers.length > 0 ? 'border-primary/40' : 'border-border'}`}>
+            <CardHeader className="pb-2 p-3 md:p-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Link2 className="h-4 w-4 text-primary" />
+                  <CardTitle className="text-sm">Partage de budget</CardTitle>
+                </div>
+                <button
+                  onClick={() => navigate({ type: 'project-transfers', projectId: Number(selectedProjectId) })}
+                  className="text-xs font-medium text-primary hover:underline flex items-center gap-1"
+                >
+                  Gérer
+                  <ArrowRight className="h-3 w-3" />
+                </button>
+              </div>
+            </CardHeader>
+            <CardContent className="p-3 md:p-4 pt-0">
+              {allTransfers.length === 0 ? (
+                <p className="text-xs text-muted-foreground py-1">Aucun transfert enregistré.</p>
+              ) : (
+                <>
+                  <div className="divide-y divide-border">
+                    {allTransfers.slice(0, TRANSFER_PREVIEW).map(item => {
+                      const amt = displayCurrency === 'CFA' ? Number(item.amount_cfa ?? 0)
+                        : displayCurrency === 'USD' ? Number(item.amount_usd ?? 0)
+                        : Number(item.amount_eur ?? 0)
+                      const projectLabel = item.isIncoming
+                        ? (item.source_name || `Projet ${item.source_project_id}`)
+                        : (item.target_name || `Projet ${item.target_project_id}`)
+                      const dateStr = item.created_at
+                        ? new Date(item.created_at).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' })
+                        : ''
+                      return (
+                        <div key={`${item.id}-${item.isIncoming ? 'in' : 'out'}`} className="flex items-center gap-2 py-2">
+                          <div className={`w-2 h-2 rounded-full flex-shrink-0 ${item.isIncoming ? 'bg-green-500' : 'bg-red-500'}`} />
+                          <span className={`text-xs font-semibold flex-shrink-0 w-12 ${item.isIncoming ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                            {item.isIncoming ? 'Reçu' : 'Envoyé'}
+                          </span>
+                          <span className="text-xs text-muted-foreground flex-1 truncate">{projectLabel}</span>
+                          <span className={`text-xs font-bold flex-shrink-0 ${item.isIncoming ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                            {item.isIncoming ? '+' : '−'}{formatAmount(amt)}
+                          </span>
+                          <span className="text-xs text-muted-foreground flex-shrink-0 w-14 text-right">{dateStr}</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                  {allTransfers.length > TRANSFER_PREVIEW && (
                     <button
                       onClick={() => navigate({ type: 'project-transfers', projectId: Number(selectedProjectId) })}
-                      className="text-xs font-medium text-primary hover:underline flex items-center gap-1"
+                      className="w-full mt-1 flex items-center justify-center gap-1 py-1.5 text-xs text-primary hover:underline"
                     >
-                      Gérer
-                      <ArrowRight className="h-3 w-3" />
+                      <ChevronDown className="h-3.5 w-3.5" />
+                      {allTransfers.length - TRANSFER_PREVIEW} autre{allTransfers.length - TRANSFER_PREVIEW > 1 ? 's' : ''} transfert{allTransfers.length - TRANSFER_PREVIEW > 1 ? 's' : ''}
                     </button>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  {!hasTransfers ? (
-                    <div className="flex items-center gap-3 py-2">
-                      <p className="text-sm text-muted-foreground">Aucun transfert enregistré. Vous pouvez lier ce projet à d'autres pour partager les budgets.</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      {/* Résumé des flux */}
-                      <div className="grid grid-cols-2 gap-3">
-                        {totalIn > 0 && (
-                          <div className="bg-green-50 dark:bg-green-950/20 rounded-xl p-3">
-                            <div className="flex items-center gap-1.5 mb-1">
-                              <ArrowLeft className="h-3.5 w-3.5 text-green-500" />
-                              <span className="text-xs text-green-700 dark:text-green-400 font-medium">Reçu d'autres projets</span>
-                            </div>
-                            <p className="text-base font-bold text-green-600">+{formatAmount(totalIn)}</p>
-                            <p className="text-xs text-muted-foreground mt-0.5">{transfers.incoming.map(t => t.source_name || `Projet ${t.source_project_id}`).join(', ')}</p>
-                          </div>
-                        )}
-                        {totalOut > 0 && (
-                          <div className="bg-orange-50 dark:bg-orange-950/20 rounded-xl p-3">
-                            <div className="flex items-center gap-1.5 mb-1">
-                              <ArrowRight className="h-3.5 w-3.5 text-orange-500" />
-                              <span className="text-xs text-orange-700 dark:text-orange-400 font-medium">Prêté à d'autres projets</span>
-                            </div>
-                            <p className="text-base font-bold text-orange-600">−{formatAmount(totalOut)}</p>
-                            <p className="text-xs text-muted-foreground mt-0.5">{transfers.outgoing.map(t => t.target_name || `Projet ${t.target_project_id}`).join(', ')}</p>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Budget effectif */}
-                      <div className="bg-muted rounded-xl p-3 flex items-center justify-between">
-                        <div>
-                          <p className="text-xs text-muted-foreground">Budget effectif</p>
-                          <p className="text-xs text-muted-foreground">= Budget propre {totalIn > 0 ? `+ Reçu` : ''}{totalOut > 0 ? ` − Prêté` : ''}</p>
-                        </div>
-                        <div className="text-right">
-                          <p className="text-base font-bold">{formatAmount(effectiveBudget)}</p>
-                          <p className={`text-xs font-medium ${effectiveBalance >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                            {effectiveBalance >= 0 ? 'Excédent' : 'Déficit'} : {formatAmount(Math.abs(effectiveBalance))}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
                   )}
-                </CardContent>
-              </Card>
-            )
-          })()}
+                </>
+              )}
+            </CardContent>
+          </Card>
 
           {/* Charts and Analysis — onglets underline */}
           <div className="space-y-4">

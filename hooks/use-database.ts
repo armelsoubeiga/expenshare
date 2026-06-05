@@ -60,7 +60,9 @@ export function useGlobalStats(displayCurrency?: CurrencyCode) {
     lastTransactionDate: null as string | null,
     projectCount: 0,
     expensesByMonth: [] as { month: string; amount: number }[],
-    budgetsByMonth: [] as { month: string; amount: number }[]
+    budgetsByMonth: [] as { month: string; amount: number }[],
+    eurToCfa: null as number | null,
+    eurToUsd: null as number | null,
   })
   const [isLoading, setIsLoading] = useState(true)
   const { isReady, db } = useDatabase()

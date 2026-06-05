@@ -7,6 +7,7 @@ import { db } from "@/lib/database"
 import { useNavigation } from "@/lib/navigation-context"
 import { UserManagement } from "@/components/settings/user-management"
 import type { TabType } from "./main-layout"
+import type { ProjectUser } from "@/lib/types"
 
 interface SidebarNavigationProps {
   activeTab: TabType | null
@@ -36,21 +37,78 @@ export function SidebarNavigation({ activeTab, onTabChange, onLogout, isSubPage,
     const unreadKey = `expenshare_notif_unread_${userData.id}`
     const itemsKey = `expenshare_notif_items_${userData.id}`
 
-    const raw = localStorage.getItem(unreadKey)
-    setUnreadCount(raw ? Number(raw) || 0 : 0)
+    // Charger depuis localStorage
     try {
       const saved = JSON.parse(localStorage.getItem(itemsKey) || "[]")
       if (Array.isArray(saved)) setNotifItems(saved)
     } catch {}
 
-    const onNewTx = (evt: Event) => {
-      const detail = (evt as CustomEvent)?.detail
-      if (!detail || String(detail.userId) === String(userData.id)) return
-      setUnreadCount(prev => {
-        const next = prev + 1
-        localStorage.setItem(unreadKey, String(next))
-        return next
+    // Synchroniser le compte depuis le serveur (source de vérité)
+    db.getNewTransactionsCountSince(localStorage.getItem(`expenshare_notif_lastSeen_${userData.id}`) || '1970-01-01T00:00:00.000Z')
+      .then(async (serverCount) => {
+        setUnreadCount(serverCount)
+        localStorage.setItem(unreadKey, String(serverCount))
+        if (serverCount > 0) {
+          const since = localStorage.getItem(`expenshare_notif_lastSeen_${userData.id}`) || '1970-01-01T00:00:00.000Z'
+          const serverTx = await db.getTransactionsSince(since, Math.min(50, serverCount + 5)).catch(() => [])
+          if (Array.isArray(serverTx) && serverTx.length) {
+            const mapped = serverTx.map((t: { id: number; created_at: string; type: string; project_name?: string; user_name?: string }) => ({
+              id: `${t.id}_${t.created_at}`,
+              type: (t.type === 'expense' ? 'expense' : 'budget') as 'expense' | 'budget',
+              projectName: t.project_name || 'Projet',
+              userName: t.user_name || 'Utilisateur',
+              ts: t.created_at ? new Date(t.created_at).getTime() : Date.now(),
+            }))
+            setNotifItems(prev => {
+              const seen = new Set(prev.map(p => p.id))
+              const merged = [...mapped.filter(m => !seen.has(m.id)), ...prev].slice(0, 30)
+              try { localStorage.setItem(itemsKey, JSON.stringify(merged)) } catch {}
+              return merged
+            })
+          }
+        }
       })
+      .catch(() => {
+        const raw = localStorage.getItem(unreadKey)
+        setUnreadCount(raw ? Number(raw) || 0 : 0)
+      })
+
+    const onNewTx = async (evt: Event) => {
+      try {
+        const detail = (evt as CustomEvent)?.detail
+        if (!detail || String(detail.userId) === String(userData.id)) return
+        const memberships: ProjectUser[] = await db.project_users.where('user_id').equals(String(userData.id)).toArray()
+        const projectIds = new Set(memberships.map((m) => Number(m.project_id)))
+        if (!projectIds.has(Number(detail.projectId))) return
+
+        setUnreadCount(prev => {
+          const next = prev + 1
+          localStorage.setItem(unreadKey, String(next))
+          return next
+        })
+
+        const item = {
+          id: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          type: (detail.type === 'expense' ? 'expense' : 'budget') as 'expense' | 'budget',
+          projectName: 'Projet',
+          userName: 'Utilisateur',
+          ts: Date.now(),
+        }
+        try {
+          const [u, proj] = await Promise.all([
+            db.users.get(String(detail.userId)).catch(() => null),
+            db.getProjectById(Number(detail.projectId)).catch(() => null),
+          ])
+          if (u?.name) item.userName = u.name
+          if ((proj as {name?: string} | null)?.name) item.projectName = (proj as {name?: string}).name!
+        } catch {}
+
+        setNotifItems(prev => {
+          const next = [item, ...prev].slice(0, 30)
+          try { localStorage.setItem(itemsKey, JSON.stringify(next)) } catch {}
+          return next
+        })
+      } catch {}
     }
     window.addEventListener("expenshare:new-transaction", onNewTx)
     return () => window.removeEventListener("expenshare:new-transaction", onNewTx)

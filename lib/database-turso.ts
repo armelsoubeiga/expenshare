@@ -943,7 +943,7 @@ class TursoDatabase {
   // ─── GLOBAL STATS ─────────────────────────────────────────────────────────
 
   async getGlobalStats() {
-    const empty = { totalExpenses: 0, totalBudgets: 0, balance: 0, transactionCount: 0, lastTransactionDate: null, projectCount: 0, expensesByMonth: [], budgetsByMonth: [], totalExpenses_eur: 0, totalBudgets_eur: 0, totalExpenses_cfa: 0, totalBudgets_cfa: 0, totalExpenses_usd: 0, totalBudgets_usd: 0 }
+    const empty = { totalExpenses: 0, totalBudgets: 0, balance: 0, transactionCount: 0, lastTransactionDate: null, projectCount: 0, expensesByMonth: [], budgetsByMonth: [], totalExpenses_eur: 0, totalBudgets_eur: 0, totalExpenses_cfa: 0, totalBudgets_cfa: 0, totalExpenses_usd: 0, totalBudgets_usd: 0, eurToCfa: null as number | null, eurToUsd: null as number | null }
     try {
       const uid = this.getCurrentUserId()
       if (!uid) return empty
@@ -951,10 +951,15 @@ class TursoDatabase {
       if (!authorized.length) return { ...empty, projectCount: 0 }
 
       const ph = authorized.map(() => '?').join(',')
-      const [txRes, projCount] = await Promise.all([
+      const [txRes, projCount, cfaSetting, usdSetting] = await Promise.all([
         turso.execute({ sql: `SELECT * FROM transactions WHERE project_id IN (${ph})`, args: authorized }),
         turso.execute({ sql: `SELECT COUNT(*) as cnt FROM projects WHERE id IN (${ph})`, args: authorized }),
+        this.settings.get(`user:${uid}:eur_to_cfa`).catch(() => null),
+        this.settings.get(`user:${uid}:eur_to_usd`).catch(() => null),
       ])
+
+      const userEurToCfa = cfaSetting?.value && Number(cfaSetting.value) > 0 ? Number(cfaSetting.value) : null
+      const userEurToUsd = usdSetting?.value && Number(usdSetting.value) > 0 ? Number(usdSetting.value) : null
 
       const all = rowsToObjs(txRes)
       const projectCount = Number(rowToObj(projCount.rows[0], projCount.columns).cnt ?? 0)
@@ -980,15 +985,29 @@ class TursoDatabase {
 
       const lastTransactionDate = all.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0]?.created_at || null
 
+      // Utiliser les taux utilisateur pour la conversion (source de vérité), sinon les montants stockés
+      const totalExpenses_cfa = userEurToCfa
+        ? Math.round(totalExpenses * userEurToCfa)
+        : expenses.reduce((s, t) => s + getCfa(t), 0)
+      const totalBudgets_cfa = userEurToCfa
+        ? Math.round(totalBudgets * userEurToCfa)
+        : budgets.reduce((s, t) => s + getCfa(t), 0)
+      const totalExpenses_usd = userEurToUsd
+        ? Math.round(totalExpenses * userEurToUsd * 100) / 100
+        : expenses.reduce((s, t) => s + getUsd(t), 0)
+      const totalBudgets_usd = userEurToUsd
+        ? Math.round(totalBudgets * userEurToUsd * 100) / 100
+        : budgets.reduce((s, t) => s + getUsd(t), 0)
+
       return {
         totalExpenses, totalBudgets, balance: totalBudgets - totalExpenses,
         transactionCount: all.length, lastTransactionDate, projectCount,
         expensesByMonth: groupByMonth(expenses), budgetsByMonth: groupByMonth(budgets),
         totalExpenses_eur: totalExpenses, totalBudgets_eur: totalBudgets,
-        totalExpenses_cfa: expenses.reduce((s, t) => s + getCfa(t), 0),
-        totalBudgets_cfa: budgets.reduce((s, t) => s + getCfa(t), 0),
-        totalExpenses_usd: expenses.reduce((s, t) => s + getUsd(t), 0),
-        totalBudgets_usd: budgets.reduce((s, t) => s + getUsd(t), 0),
+        totalExpenses_cfa, totalBudgets_cfa,
+        totalExpenses_usd, totalBudgets_usd,
+        eurToCfa: userEurToCfa,
+        eurToUsd: userEurToUsd,
       }
     } catch (e) {
       console.error('[ExpenseShare] getGlobalStats failed:', e)

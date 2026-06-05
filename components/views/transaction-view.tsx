@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef, useCallback } from "react"
-import { Loader2, CheckCircle2, TrendingDown, TrendingUp, Camera, Mic, Upload, FileText, X, Video } from "lucide-react"
+import { Loader2, CheckCircle2, TrendingDown, TrendingUp, Camera, Mic, FileText, X, Video, Paperclip } from "lucide-react"
 import { MediaUpload, type MediaUploadHandle } from "@/components/media/media-upload"
 import { CategoryPicker } from "@/components/forms/category-picker"
 import { useDatabase } from "@/hooks/use-database"
@@ -317,7 +317,7 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
           </div>
 
           {/* Boutons media */}
-          <div className="grid grid-cols-4 gap-2">
+          <div className="grid grid-cols-5 gap-1.5">
             {[
               { icon: Camera, label: "Photo", id: "tv-img", color: "text-blue-500", bg: "bg-blue-50 dark:bg-blue-950/20" },
               {
@@ -328,6 +328,7 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
                 bg: isRecordingAudio ? "bg-red-50 dark:bg-red-950/20 animate-pulse" : "bg-green-50 dark:bg-green-950/20",
               },
               { icon: Video, label: "Vidéo", id: "tv-vid", color: "text-purple-500", bg: "bg-purple-50 dark:bg-purple-950/20" },
+              { icon: Paperclip, label: "Doc", id: "tv-file", color: "text-orange-500", bg: "bg-orange-50 dark:bg-orange-950/20" },
               { icon: FileText, label: "Note", id: "tv-note", color: "text-amber-500", bg: "bg-amber-50 dark:bg-amber-950/20" },
             ].map(({ icon: Icon, label, id, color, bg }) => (
               <button
@@ -343,10 +344,10 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
                   }
                   document.getElementById(id)?.click()
                 }}
-                className={`flex flex-col items-center gap-1.5 py-3 rounded-xl ${bg} hover:opacity-80 transition-all`}
+                className={`flex flex-col items-center gap-1 py-2.5 rounded-xl ${bg} hover:opacity-80 transition-all`}
               >
-                <Icon className={`h-5 w-5 ${color}`} />
-                <span className="text-[10px] font-medium text-muted-foreground leading-none">{label}</span>
+                <Icon className={`h-4 w-4 ${color}`} />
+                <span className="text-[9px] font-medium text-muted-foreground leading-none">{label}</span>
               </button>
             ))}
           </div>
@@ -387,7 +388,7 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
             <MediaUpload id="tv-img" onMediaAdd={m => setMediaFiles(p => [...p, m])} onMediaRemove={id => setMediaFiles(p => p.filter(m => m.id !== id))} mediaFiles={mediaFiles} maxFiles={10} acceptedTypes={["image/*"]} />
             <MediaUpload id="tv-aud" ref={audioRef} onMediaAdd={m => setMediaFiles(p => [...p, m])} onMediaRemove={id => setMediaFiles(p => p.filter(m => m.id !== id))} mediaFiles={mediaFiles} maxFiles={5} acceptedTypes={["audio/*"]} onRecordingStart={() => { setIsRecordingAudio(true); setRecordingSeconds(0) }} onRecordingStop={() => setIsRecordingAudio(false)} onRecordingTimeTick={s => setRecordingSeconds(s)} />
             <MediaUpload id="tv-vid" onMediaAdd={m => setMediaFiles(p => [...p, m])} onMediaRemove={id => setMediaFiles(p => p.filter(m => m.id !== id))} mediaFiles={mediaFiles} maxFiles={5} acceptedTypes={["video/*"]} />
-            <MediaUpload id="tv-file" onMediaAdd={m => setMediaFiles(p => [...p, m])} onMediaRemove={id => setMediaFiles(p => p.filter(m => m.id !== id))} mediaFiles={mediaFiles} maxFiles={10} acceptedTypes={["application/*", ".pdf", ".doc", ".docx", ".xls", ".xlsx"]} />
+            <MediaUpload id="tv-file" onMediaAdd={m => setMediaFiles(p => [...p, m])} onMediaRemove={id => setMediaFiles(p => p.filter(m => m.id !== id))} mediaFiles={mediaFiles} maxFiles={10} acceptedTypes={["application/pdf", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-powerpoint", "application/vnd.openxmlformats-officedocument.presentationml.presentation", "text/plain", "text/csv", ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv"]} />
           </div>
         </div>
 
@@ -404,14 +405,14 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
           <button
             type="button"
             onClick={onCancel}
-            className="flex-1 h-13 rounded-xl border border-border bg-card hover:bg-muted transition-colors text-sm font-medium"
+            className="flex-1 h-10 rounded-xl border border-border bg-card hover:bg-muted transition-colors text-sm font-medium"
           >
             Annuler
           </button>
           <button
             type="submit"
             disabled={isLoading}
-            className={`flex-1 h-13 rounded-xl text-white font-semibold text-sm transition-all flex items-center justify-center gap-2 ${
+            className={`flex-1 h-10 rounded-xl text-white font-semibold text-sm transition-all flex items-center justify-center gap-2 ${
               type === "expense"
                 ? "bg-red-500 hover:bg-red-600 disabled:bg-red-300"
                 : "bg-blue-500 hover:bg-blue-600 disabled:bg-blue-300"

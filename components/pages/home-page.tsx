@@ -4,7 +4,7 @@ import { useEffect, useState } from "react"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { TrendingUp, TrendingDown, DollarSign, Folder, Clock, Eye, EyeOff, RefreshCw, Plus } from "lucide-react"
+import { TrendingUp, TrendingDown, DollarSign, Folder, Clock, Eye, EyeOff, RefreshCw, Plus, Settings } from "lucide-react"
 import type { CurrencyCode, Transaction } from "@/lib/types"
 import { normalizeCurrencyCode, formatDateRelative } from "@/lib/utils"
 import { db } from "@/lib/database"
@@ -24,17 +24,22 @@ export function HomePage() {
   const { stats, isLoading: statsLoading, refetch: refetchStats } = useGlobalStats(displayCurrency)
   const { transactions, isLoading: txLoading, refetch: refetchTx } = useRecentTransactions(10)
 
+  const persistCurrency = async (c: CurrencyCode) => {
+    try {
+      const stored = localStorage.getItem("expenshare_user")
+      if (!stored) return
+      const user = JSON.parse(stored)
+      await db.settings.put({ key: `user:${user.id}:currency`, value: c })
+    } catch {}
+  }
+
   useEffect(() => {
     const loadCurrency = async () => {
       try {
         const stored = localStorage.getItem("expenshare_user")
         if (!stored) return
         const user = JSON.parse(stored)
-        const [cur, cfa, usd] = await Promise.all([
-          db.settings.get(`user:${user.id}:currency`),
-          db.settings.get(`user:${user.id}:eur_to_cfa`),
-          db.settings.get(`user:${user.id}:eur_to_usd`),
-        ])
+        const cur = await db.settings.get(`user:${user.id}:currency`)
         const n = normalizeCurrencyCode(cur?.value)
         if (n) setDisplayCurrency(n)
         refetchStats()
@@ -90,29 +95,44 @@ export function HomePage() {
           <h2 className="text-2xl font-bold">Tableau de bord</h2>
           <p className="text-sm text-muted-foreground">Vue d'ensemble de vos projets et activités</p>
         </div>
-        <div className="flex items-center gap-2">
-          {CURRENCIES.map(c => (
+        <div className="flex flex-col items-end gap-1.5">
+          <div className="flex items-center gap-2">
+            {CURRENCIES.map(c => (
+              <button
+                key={c}
+                onClick={() => { setDisplayCurrency(c); void persistCurrency(c) }}
+                className={`text-sm px-3 py-1.5 rounded-lg font-medium transition-all border ${
+                  displayCurrency === c ? 'bg-primary text-primary-foreground border-primary' : 'border-border text-muted-foreground hover:border-primary/40 bg-card'
+                }`}
+              >
+                {c}
+              </button>
+            ))}
+          </div>
+          {/* Message si les taux ne sont pas configurés */}
+          {displayCurrency !== 'EUR' && !statsLoading && (
+            (displayCurrency === 'CFA' && !stats.eurToCfa) ||
+            (displayCurrency === 'USD' && !stats.eurToUsd)
+          ) && (
             <button
-              key={c}
-              onClick={() => setDisplayCurrency(c)}
-              className={`text-sm px-3 py-1.5 rounded-lg font-medium transition-all border ${
-                displayCurrency === c ? 'bg-primary text-primary-foreground border-primary' : 'border-border text-muted-foreground hover:border-primary/40 bg-card'
-              }`}
+              onClick={() => navigate({ type: 'settings' })}
+              className="flex items-center gap-1 text-[11px] text-amber-600 dark:text-amber-400 hover:underline"
             >
-              {c}
+              <Settings className="h-3 w-3" />
+              Taux non configuré → Paramètres
             </button>
-          ))}
+          )}
         </div>
       </div>
 
       {/* Indicateurs globaux */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+        <Card className="py-4 gap-3">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 px-4">
             <CardTitle className="text-sm font-medium">Total Dépenses</CardTitle>
             <TrendingDown className="h-4 w-4 text-red-500" />
           </CardHeader>
-          <CardContent>
+          <CardContent className="px-4">
             <div className="text-2xl font-bold text-red-600">
               {statsLoading ? <span className="h-7 w-32 bg-muted animate-pulse rounded block" /> : fmt(stats.totalExpenses)}
             </div>
@@ -126,7 +146,7 @@ export function HomePage() {
             </div>
           </CardContent>
           {!statsLoading && stats.lastTransactionDate && (
-            <CardFooter className="pt-0 pb-3">
+            <CardFooter className="pt-0 pb-1 px-4">
               <div className="flex items-center gap-1 text-xs text-muted-foreground">
                 <Clock className="h-3 w-3" />
                 <span>Dernière : {formatDateRelative(stats.lastTransactionDate)}</span>
@@ -135,12 +155,12 @@ export function HomePage() {
           )}
         </Card>
 
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+        <Card className="py-4 gap-3">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 px-4">
             <CardTitle className="text-sm font-medium">Total Budgets</CardTitle>
             <TrendingUp className="h-4 w-4 text-blue-500" />
           </CardHeader>
-          <CardContent>
+          <CardContent className="px-4">
             <div className="text-2xl font-bold text-blue-600">
               {statsLoading ? <span className="h-7 w-32 bg-muted animate-pulse rounded block" /> : fmt(stats.totalBudgets)}
             </div>
@@ -154,7 +174,7 @@ export function HomePage() {
             </div>
           </CardContent>
           {!statsLoading && stats.projectCount > 0 && (
-            <CardFooter className="pt-0 pb-3">
+            <CardFooter className="pt-0 pb-1 px-4">
               <div className="flex items-center gap-1 text-xs text-muted-foreground">
                 <Folder className="h-3 w-3" />
                 <span>Moyenne / projet : {fmt(stats.totalBudgets / stats.projectCount)}</span>
@@ -163,19 +183,19 @@ export function HomePage() {
           )}
         </Card>
 
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+        <Card className="py-4 gap-3">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 px-4">
             <CardTitle className="text-sm font-medium">Solde Global</CardTitle>
             <DollarSign className="h-4 w-4 text-green-500" />
           </CardHeader>
-          <CardContent>
+          <CardContent className="px-4">
             <div className={`text-2xl font-bold ${balanceColor(stats.balance)}`}>
               {statsLoading ? <span className="h-7 w-32 bg-muted animate-pulse rounded block" /> : fmt(stats.balance)}
             </div>
             <div className="text-xs text-muted-foreground mt-1">Budget − Dépenses</div>
           </CardContent>
           {!statsLoading && (
-            <CardFooter className="pt-0 pb-3">
+            <CardFooter className="pt-0 pb-1 px-4">
               <div className="flex items-center gap-1 text-xs">
                 <span className={balanceColor(stats.balance)}>
                   {stats.balance >= 0 ? "Excédent" : "Déficit"} :

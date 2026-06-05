@@ -91,7 +91,7 @@ export function CategoryPicker({
     <div className="space-y-3">
       {/* Affichage de la sélection courante */}
       {selectedCat && (
-        <div className="flex items-center gap-2 px-3 py-2 bg-primary/10 border border-primary/30 rounded-xl text-sm">
+        <div className="flex items-center gap-2 px-3 py-1.5 bg-primary/10 border border-primary/30 rounded-xl text-sm">
           <div className="flex-1 min-w-0">
             <span className="font-medium text-primary">
               {selectedParent ? `${selectedParent.name} / ` : ""}
@@ -134,7 +134,7 @@ export function CategoryPicker({
                 type="button"
                 disabled={disabled}
                 onClick={() => handleSelectRoot(cat)}
-                className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium transition-all border ${
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-medium transition-all border ${
                   isSelected || childSelected
                     ? "bg-primary text-primary-foreground border-primary shadow-sm"
                     : isOpen
@@ -155,7 +155,7 @@ export function CategoryPicker({
             type="button"
             disabled={disabled}
             onClick={() => startAdd(null)}
-            className="flex items-center gap-1 px-3 py-2 rounded-xl text-sm border border-dashed border-border text-muted-foreground hover:border-primary/50 hover:text-primary hover:bg-primary/5 transition-all disabled:opacity-40"
+            className="flex items-center gap-1 px-3 py-1.5 rounded-xl text-sm border border-dashed border-border text-muted-foreground hover:border-primary/50 hover:text-primary hover:bg-primary/5 transition-all disabled:opacity-40"
           >
             <Plus className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">Nouvelle</span>
@@ -179,7 +179,7 @@ export function CategoryPicker({
                 type="button"
                 disabled={disabled}
                 onClick={() => handleSelectChild(cat)}
-                className={`px-3 py-2 rounded-xl text-sm font-medium transition-all border ${
+                className={`px-3 py-1.5 rounded-xl text-sm font-medium transition-all border ${
                   selectedId === String(cat.id)
                     ? "bg-primary text-primary-foreground border-primary shadow-sm"
                     : "bg-card border-border hover:border-primary/50 hover:bg-muted/60"
@@ -193,7 +193,7 @@ export function CategoryPicker({
               type="button"
               disabled={disabled}
               onClick={() => startAdd(openParentId)}
-              className="flex items-center gap-1 px-3 py-2 rounded-xl text-sm border border-dashed border-border text-muted-foreground hover:border-primary/50 hover:text-primary hover:bg-primary/5 transition-all disabled:opacity-40"
+              className="flex items-center gap-1 px-3 py-1.5 rounded-xl text-sm border border-dashed border-border text-muted-foreground hover:border-primary/50 hover:text-primary hover:bg-primary/5 transition-all disabled:opacity-40"
             >
               <Plus className="h-3.5 w-3.5" />
               <span>Nouvelle</span>

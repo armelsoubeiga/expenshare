@@ -86,15 +86,13 @@ export function TopHeader({ onLogout }: TopHeaderProps) {
 
     const sincePromise = computeSince()
     sincePromise.then((since) => db.getNewTransactionsCountSince(since)).then(async (serverCount) => {
-      const raw = localStorage.getItem(unreadKey)
-      const localCount = raw ? Number(raw) || 0 : 0
-      const effective = Math.max(serverCount, localCount)
-      setUnreadCount(effective)
-      localStorage.setItem(unreadKey, String(effective))
-      try {
-        if (effective > 0) {
+      // Utiliser le compte serveur comme source de vérité pour éviter les faux points rouges périmés
+      setUnreadCount(serverCount)
+      localStorage.setItem(unreadKey, String(serverCount))
+      if (serverCount > 0) {
+        try {
           const sinceVal = await sincePromise
-          const serverTx: Transaction[] = await db.getTransactionsSince(sinceVal, Math.min(50, effective + 5))
+          const serverTx: Transaction[] = await db.getTransactionsSince(sinceVal, Math.min(50, serverCount + 5))
           if (Array.isArray(serverTx) && serverTx.length) {
             const mapped: NotifItem[] = serverTx.map((t) => ({
               id: `${t.id}_${t.created_at}`,
@@ -110,9 +108,10 @@ export function TopHeader({ onLogout }: TopHeaderProps) {
               return merged
             })
           }
-        }
-      } catch {}
+        } catch {}
+      }
     }).catch(() => {
+      // Réseau hors ligne : charger depuis localStorage
       const raw = localStorage.getItem(unreadKey)
       setUnreadCount(raw ? Number(raw) || 0 : 0)
     })
@@ -130,29 +129,36 @@ export function TopHeader({ onLogout }: TopHeaderProps) {
         if (String(detail.userId) === String(userData.id)) return
         const memberships: ProjectUser[] = await db.project_users.where('user_id').equals(String(userData.id)).toArray()
         const projectIds = new Set(memberships.map((m) => Number(m.project_id)))
-        if (projectIds.has(Number(detail.projectId))) {
-          setUnreadCount(prev => {
-            const next = (prev || 0) + 1
-            localStorage.setItem(unreadKey, String(next))
-            return next
-          })
-          try {
-            const u = await db.users.get(String(detail.userId))
-            const proj = await db.getProjectById(Number(detail.projectId))
-            const item: NotifItem = {
-              id: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-              type: detail.type === 'expense' ? 'expense' : 'budget',
-              projectName: proj?.name || 'Projet',
-              userName: u?.name || 'Utilisateur',
-              ts: Date.now(),
-            }
-            setNotifItems(prev => {
-              const next = [item, ...prev].slice(0, 30)
-              try { localStorage.setItem(itemsKey, JSON.stringify(next)) } catch {}
-              return next
-            })
-          } catch {}
+        if (!projectIds.has(Number(detail.projectId))) return
+
+        setUnreadCount(prev => {
+          const next = (prev || 0) + 1
+          localStorage.setItem(unreadKey, String(next))
+          return next
+        })
+
+        // Créer l'item avec des données par défaut, puis enrichir avec les noms si possible
+        const item: NotifItem = {
+          id: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          type: detail.type === 'expense' ? 'expense' : 'budget',
+          projectName: 'Projet',
+          userName: 'Utilisateur',
+          ts: Date.now(),
         }
+        try {
+          const [u, proj] = await Promise.all([
+            db.users.get(String(detail.userId)).catch(() => null),
+            db.getProjectById(Number(detail.projectId)).catch(() => null),
+          ])
+          if (u?.name) item.userName = u.name
+          if ((proj as {name?: string} | null)?.name) item.projectName = (proj as {name?: string}).name!
+        } catch {}
+
+        setNotifItems(prev => {
+          const next = [item, ...prev].slice(0, 30)
+          try { localStorage.setItem(itemsKey, JSON.stringify(next)) } catch {}
+          return next
+        })
       } catch {}
     }
     window.addEventListener('expenshare:new-transaction', onNewTx)
