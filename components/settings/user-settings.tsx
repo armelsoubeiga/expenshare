@@ -78,8 +78,7 @@ export function UserSettings({ isOpen, onClose }: UserSettingsProps) {
       const normalizedUserId = String(parsedId)
       setUserId(normalizedUserId)
 
-      const adminIdentifier = await database.getAdminUserId()
-      const isUserAdmin = Boolean(adminIdentifier && normalizedUserId === adminIdentifier)
+      const isUserAdmin = await database.isAdmin(normalizedUserId)
       setIsAdmin(isUserAdmin)
 
       let fetchedProjects: ProjectListItem[] = []

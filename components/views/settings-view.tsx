@@ -54,8 +54,7 @@ export function SettingsView({ onBack }: SettingsViewProps) {
       const uid = String(parsedId)
       setUserId(uid)
 
-      const adminId = await database.getAdminUserId()
-      const userIsAdmin = Boolean(adminId && uid === adminId)
+      const userIsAdmin = await database.isAdmin(uid)
       setIsAdmin(userIsAdmin)
 
       let fetchedProjects: ProjectListItem[] = []

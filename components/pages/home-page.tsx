@@ -62,9 +62,19 @@ export function HomePage() {
     }
   }, [refetchStats, refetchTx])
 
+  const fmtCurrency = (amount: number, currency: string) => {
+    const isWhole = Number.isInteger(Math.round(amount * 100) / 100) || currency === 'XOF'
+    return new Intl.NumberFormat("fr-FR", {
+      style: "currency",
+      currency,
+      minimumFractionDigits: isWhole ? 0 : 2,
+      maximumFractionDigits: currency === 'XOF' ? 0 : 2,
+    }).format(amount)
+  }
+
   const fmt = (amount: number) => {
     const currency = displayCurrency === "CFA" ? "XOF" : displayCurrency
-    return new Intl.NumberFormat("fr-FR", { style: "currency", currency }).format(amount)
+    return fmtCurrency(amount, currency)
   }
 
   const fmtTx = (tx: Transaction) => {
@@ -73,7 +83,7 @@ export function HomePage() {
     if (displayCurrency === 'CFA') value = Number(tx.amount_cfa ?? tx.amount_eur ?? tx.amount ?? 0)
     else if (displayCurrency === 'USD') value = Number(tx.amount_usd ?? tx.amount_eur ?? tx.amount ?? 0)
     else value = Number(tx.amount_eur ?? tx.amount ?? 0)
-    return new Intl.NumberFormat("fr-FR", { style: "currency", currency }).format(value)
+    return fmtCurrency(value, currency)
   }
 
   const balanceColor = (v: number) => v > 0 ? "text-green-600" : v < 0 ? "text-red-600" : "text-gray-600"

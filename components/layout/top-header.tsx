@@ -58,8 +58,8 @@ export function TopHeader({ onLogout }: TopHeaderProps) {
     const userData = JSON.parse(storedUser)
     setUserName(userData.name)
 
-    db.getAdminUserId().then((aid) => {
-      if (aid && userData.id === aid) setIsAdmin(true)
+    db.isAdmin(String(userData.id)).then((isAdm) => {
+      if (isAdm) setIsAdmin(true)
     }).catch(() => {})
 
     const unreadKey = `expenshare_notif_unread_${userData.id}`

@@ -32,7 +32,7 @@ export function SidebarNavigation({ activeTab, onTabChange, onLogout, isSubPage,
     if (!stored) return
     const userData = JSON.parse(stored)
     setUserName(userData.name || "")
-    db.getAdminUserId().then(aid => { if (aid && userData.id === aid) setIsAdmin(true) }).catch(() => {})
+    db.isAdmin(String(userData.id)).then(isAdm => { if (isAdm) setIsAdmin(true) }).catch(() => {})
 
     const unreadKey = `expenshare_notif_unread_${userData.id}`
     const itemsKey = `expenshare_notif_items_${userData.id}`

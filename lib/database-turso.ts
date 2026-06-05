@@ -232,12 +232,34 @@ class TursoDatabase {
 
   async getAdminUserId(): Promise<string | null> {
     try {
-      const r = await turso.execute({ sql: 'SELECT id FROM users WHERE is_admin = 1 LIMIT 1', args: [] })
+      // Super admin = premier utilisateur créé avec is_admin = 1
+      const r = await turso.execute({ sql: 'SELECT id FROM users WHERE is_admin = 1 ORDER BY created_at ASC LIMIT 1', args: [] })
       if (!r.rows.length) return null
       return String(rowToObj(r.rows[0], r.columns).id)
     } catch {
       return null
     }
+  }
+
+  async isAdmin(userId: string): Promise<boolean> {
+    try {
+      const r = await turso.execute({ sql: 'SELECT id FROM users WHERE id = ? AND is_admin = 1 LIMIT 1', args: [userId] })
+      return r.rows.length > 0
+    } catch {
+      return false
+    }
+  }
+
+  async promoteToAdmin(userId: string): Promise<void> {
+    await turso.execute({ sql: 'UPDATE users SET is_admin = 1 WHERE id = ?', args: [userId] })
+  }
+
+  async revokeAdmin(userId: string): Promise<void> {
+    const superAdminId = await this.getAdminUserId()
+    if (superAdminId && userId === superAdminId) {
+      throw new Error('Le super administrateur ne peut pas être rétrogradé')
+    }
+    await turso.execute({ sql: 'UPDATE users SET is_admin = 0 WHERE id = ?', args: [userId] })
   }
 
   // ─── PROJECTS ─────────────────────────────────────────────────────────────

@@ -164,7 +164,13 @@ export function StatsPage() {
 
   const currencyForIntl = displayCurrency === "CFA" ? "XOF" : displayCurrency
   const formatAmount = (amount: number) => {
-    return new Intl.NumberFormat("fr-FR", { style: "currency", currency: currencyForIntl }).format(amount)
+    const isWhole = Number.isInteger(Math.round(amount * 100) / 100) || currencyForIntl === 'XOF'
+    return new Intl.NumberFormat("fr-FR", {
+      style: "currency",
+      currency: currencyForIntl,
+      minimumFractionDigits: isWhole ? 0 : 2,
+      maximumFractionDigits: currencyForIntl === 'XOF' ? 0 : 2,
+    }).format(amount)
   }
 
   // Affichage ligne par ligne: utiliser la colonne native si disponible
@@ -174,7 +180,7 @@ export function StatsPage() {
     else if (displayCurrency === 'USD' && tx.amount_usd != null) value = Number(tx.amount_usd)
     else if (displayCurrency === 'EUR' && tx.amount_eur != null) value = Number(tx.amount_eur)
     if (value == null) value = convertAmount(Number(tx.amount_eur ?? tx.amount ?? 0))
-    return new Intl.NumberFormat("fr-FR", { style: "currency", currency: currencyForIntl }).format(value)
+    return formatAmount(value)
   }
 
   // La hiérarchie est déjà en devise cible

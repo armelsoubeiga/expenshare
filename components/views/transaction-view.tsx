@@ -1,10 +1,11 @@
 "use client"
 
-import { useState, useEffect, useRef, useCallback } from "react"
-import { Loader2, CheckCircle2, TrendingDown, TrendingUp, Camera, Mic, FileText, X, Video, Paperclip } from "lucide-react"
+import { useState, useEffect, useRef, useCallback, useMemo } from "react"
+import { Loader2, CheckCircle2, TrendingDown, TrendingUp, Camera, Mic, FileText, X, Video, Paperclip, AlertTriangle } from "lucide-react"
 import { MediaUpload, type MediaUploadHandle } from "@/components/media/media-upload"
 import { CategoryPicker } from "@/components/forms/category-picker"
 import { useDatabase } from "@/hooks/use-database"
+import { useNavigation } from "@/lib/navigation-context"
 import type { MediaFile } from "@/lib/media-types"
 import type { Category, Note, ProjectWithId } from "@/lib/types"
 
@@ -16,6 +17,7 @@ interface TransactionViewProps {
 
 export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: TransactionViewProps) {
   const { db } = useDatabase()
+  const { navigate } = useNavigation()
   const [projects, setProjects] = useState<ProjectWithId[]>([])
   const [categories, setCategories] = useState<(Category & { id: number })[]>([])
   const [type, setType] = useState<"expense" | "budget">("expense")
@@ -34,9 +36,20 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
   const audioRef = useRef<MediaUploadHandle | null>(null)
   const amountRef = useRef<HTMLInputElement>(null)
 
+  // Devise et taux de conversion
+  const [eurToCfa, setEurToCfa] = useState(655.957)
+  const [eurToUsd, setEurToUsd] = useState(1.0)
+  const [cfaRateConfigured, setCfaRateConfigured] = useState(false)
+  const [usdRateConfigured, setUsdRateConfigured] = useState(false)
+  const [entryCurrencyOverride, setEntryCurrencyOverride] = useState<string | null>(null)
+
   const selectedProject = projects.find(p => String(p.id) === projectId)
   const projectCurrency = selectedProject?.currency || "EUR"
-  const currencySymbol = projectCurrency === "CFA" ? "F CFA" : projectCurrency === "USD" ? "$" : "€"
+  const projectCurrencyCode = (projectCurrency === 'XOF' ? 'CFA' : projectCurrency).toUpperCase() as 'EUR' | 'CFA' | 'USD'
+  const entryCurrency = (entryCurrencyOverride || projectCurrencyCode) as 'EUR' | 'CFA' | 'USD'
+
+  const currencyLabel = (c: string) => c === 'CFA' ? 'F CFA' : c === 'USD' ? 'USD $' : 'EUR €'
+  const currencySymbol = entryCurrency === "CFA" ? "F CFA" : entryCurrency === "USD" ? "$" : "€"
 
   // ─── Chargement projets ───────────────────────────────────────────────────
   const loadProjects = useCallback(async () => {
@@ -75,7 +88,57 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
     if (projectId && type === "expense") loadCategories(Number(projectId))
     setCategoryId("")
     setTitle("")
+    setEntryCurrencyOverride(null)
   }, [projectId, type, loadCategories])
+
+  // Charger les taux du projet quand le projet ou db change
+  useEffect(() => {
+    if (!db || !projectId) return
+    ;(async () => {
+      try {
+        const [cfa, usd] = await Promise.all([
+          db.settings.get(`project:${projectId}:eur_to_cfa`),
+          db.settings.get(`project:${projectId}:eur_to_usd`),
+        ])
+        const cfaVal = cfa?.value && Number(cfa.value) > 0 ? Number(cfa.value) : null
+        const usdVal = usd?.value && Number(usd.value) > 0 ? Number(usd.value) : null
+        setCfaRateConfigured(cfaVal !== null)
+        setUsdRateConfigured(usdVal !== null)
+        if (cfaVal) setEurToCfa(cfaVal)
+        if (usdVal) setEurToUsd(usdVal)
+      } catch {}
+    })()
+  }, [db, projectId])
+
+  // Convertit un montant depuis entryCurrency vers projectCurrencyCode
+  const convertToProjectCurrency = useCallback((amt: number): number => {
+    if (entryCurrency === projectCurrencyCode) return amt
+    let inEur: number
+    if (entryCurrency === 'EUR') inEur = amt
+    else if (entryCurrency === 'CFA') inEur = eurToCfa > 0 ? amt / eurToCfa : amt
+    else inEur = eurToUsd > 0 ? amt / eurToUsd : amt
+    if (projectCurrencyCode === 'EUR') return Math.round(inEur * 100) / 100
+    if (projectCurrencyCode === 'CFA') return Math.round(inEur * eurToCfa)
+    return Math.round(inEur * eurToUsd * 100) / 100
+  }, [entryCurrency, projectCurrencyCode, eurToCfa, eurToUsd])
+
+  const needsRateWarning = useMemo(() => {
+    if (entryCurrency === projectCurrencyCode) return false
+    const pair = [entryCurrency, projectCurrencyCode]
+    if (pair.includes('CFA') && !cfaRateConfigured) return true
+    if (pair.includes('USD') && !usdRateConfigured) return true
+    return false
+  }, [entryCurrency, projectCurrencyCode, cfaRateConfigured, usdRateConfigured])
+
+  const formatPreview = useCallback((amt: number): string => {
+    const cur = projectCurrencyCode === 'CFA' ? 'XOF' : projectCurrencyCode
+    return new Intl.NumberFormat('fr-FR', {
+      style: 'currency',
+      currency: cur,
+      minimumFractionDigits: cur === 'XOF' ? 0 : 0,
+      maximumFractionDigits: cur === 'XOF' ? 0 : 2,
+    }).format(amt)
+  }, [projectCurrencyCode])
 
   // ─── Ajout de catégorie inline ────────────────────────────────────────────
   const handleAddCategory = useCallback(async (name: string, parentId: number | null): Promise<number> => {
@@ -106,7 +169,8 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
     setError("")
 
     if (!projectId) { setError("Sélectionnez un projet"); return }
-    if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) { setError("Montant invalide"); return }
+    const rawAmount = Number(amount.replace(',', '.'))
+    if (!amount || isNaN(rawAmount) || rawAmount <= 0) { setError("Montant invalide"); return }
     if (type === "expense" && !categoryId) { setError("Sélectionnez ou créez une catégorie"); return }
     if (type === "budget" && !title.trim()) { setError("Le titre est obligatoire pour un budget"); return }
 
@@ -120,12 +184,15 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
       const selectedCat = categories.find(c => String(c.id) === categoryId)
       const txTitle = title.trim() || selectedCat?.name || ""
 
+      // Convertir vers la devise du projet si nécessaire
+      const submitAmount = convertToProjectCurrency(rawAmount)
+
       const txId = await db.transactions.add({
         project_id: Number(projectId),
         user_id: user.id!,
         category_id: categoryId ? Number(categoryId) : null,
         type,
-        amount: Number(amount),
+        amount: submitAmount,
         title: txTitle,
         description,
       })
@@ -207,13 +274,14 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
           <div className="flex items-baseline gap-3">
             <input
               ref={amountRef}
-              type="number"
+              type="text"
               inputMode="decimal"
-              step="0.01"
-              min="0"
               placeholder="0"
               value={amount}
-              onChange={e => setAmount(e.target.value)}
+              onChange={e => {
+                const raw = e.target.value.replace(',', '.')
+                if (raw === '' || /^\d*\.?\d*$/.test(raw)) setAmount(raw)
+              }}
               autoFocus
               className={`flex-1 text-5xl font-bold bg-transparent border-none outline-none placeholder:text-muted-foreground/25 w-full ${
                 type === "expense" ? "text-red-600" : "text-blue-600"
@@ -223,6 +291,44 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
               {currencySymbol}
             </span>
           </div>
+
+          {/* Sélecteur de devise */}
+          {projectId && (
+            <div className="flex items-center gap-1.5 mt-3 flex-wrap">
+              {(['EUR', 'CFA', 'USD'] as const).map(c => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={e => { e.stopPropagation(); setEntryCurrencyOverride(c === projectCurrencyCode ? null : c) }}
+                  className={`px-2.5 py-1 text-[11px] rounded-full border font-medium transition-colors ${
+                    entryCurrency === c
+                      ? 'bg-primary text-primary-foreground border-primary'
+                      : 'border-border text-muted-foreground hover:border-primary/40'
+                  }`}
+                >
+                  {currencyLabel(c)}
+                </button>
+              ))}
+              {needsRateWarning && (
+                <button
+                  type="button"
+                  onClick={e => { e.stopPropagation(); if (projectId) navigate({ type: 'project-settings', projectId: Number(projectId) }) }}
+                  className="flex items-center gap-1 text-[11px] text-amber-600 dark:text-amber-400 hover:underline ml-1"
+                >
+                  <AlertTriangle className="h-3 w-3" />
+                  Taux à configurer
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Aperçu de la conversion */}
+          {entryCurrency !== projectCurrencyCode && amount && !isNaN(Number(amount.replace(',', '.'))) && Number(amount.replace(',', '.')) > 0 && (
+            <p className="text-xs text-muted-foreground mt-2">
+              ≈ <span className="font-semibold">{formatPreview(convertToProjectCurrency(Number(amount.replace(',', '.'))))}</span>
+              {needsRateWarning && <span className="text-amber-500 ml-1">(taux par défaut)</span>}
+            </p>
+          )}
         </div>
 
         {/* ─── Projet ─── */}
