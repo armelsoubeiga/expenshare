@@ -6,8 +6,9 @@ function getS3Client() {
   const endpoint = process.env.B2_ENDPOINT
   const accessKeyId = process.env.B2_KEY_ID
   const secretAccessKey = process.env.B2_APPLICATION_KEY
-  if (!endpoint || !accessKeyId || !secretAccessKey) {
-    throw new Error('B2 storage not configured')
+  const bucket = process.env.B2_BUCKET_NAME
+  if (!endpoint || !accessKeyId || !secretAccessKey || !bucket) {
+    throw new Error('B2 storage not configured (missing B2_ENDPOINT, B2_KEY_ID, B2_APPLICATION_KEY or B2_BUCKET_NAME)')
   }
   return new S3Client({
     endpoint,
@@ -17,7 +18,7 @@ function getS3Client() {
   })
 }
 
-const BUCKET = process.env.B2_BUCKET_NAME!
+const BUCKET = process.env.B2_BUCKET_NAME ?? ''
 
 // GET /api/media?key=image/uuid.jpg  → redirige vers une URL signée (1h)
 export async function GET(req: NextRequest) {

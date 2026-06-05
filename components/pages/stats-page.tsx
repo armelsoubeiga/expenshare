@@ -17,8 +17,24 @@ import { TransactionTable } from "@/components/ui/transaction-table"
 export function StatsPage() {
   const { navigate } = useNavigation()
   const [selectedProjectId, setSelectedProjectId] = useState<string>("")
-  const [userId, setUserId] = useState<number | null>(null)
-  const [currentUserId, setCurrentUserId] = useState<string>("")
+  const [userId, setUserId] = useState<number | null>(() => {
+    if (typeof window === "undefined") return null
+    try {
+      const stored = localStorage.getItem("expenshare_user")
+      if (!stored) return null
+      const data = JSON.parse(stored) as { id?: number | string }
+      return data.id != null ? Number(data.id) : null
+    } catch { return null }
+  })
+  const [currentUserId, setCurrentUserId] = useState<string>(() => {
+    if (typeof window === "undefined") return ""
+    try {
+      const stored = localStorage.getItem("expenshare_user")
+      if (!stored) return ""
+      const data = JSON.parse(stored) as { id?: number | string }
+      return data.id != null ? String(data.id) : ""
+    } catch { return "" }
+  })
   const [ownedProjectIds, setOwnedProjectIds] = useState<Set<number>>(new Set())
   const [categoryHierarchy, setCategoryHierarchy] = useState<any[]>([])
   // Devise projet + taux
@@ -34,25 +50,20 @@ export function StatsPage() {
   const [filterType, setFilterType] = useState<'all' | 'expense' | 'budget'>('all')
   const [activeStatsTab, setActiveStatsTab] = useState<'overview' | 'categories' | 'transactions'>('overview')
 
-  // Get user ID + owned projects
+  // Charger les projets dont l'utilisateur est propriétaire
   useEffect(() => {
-    const storedUser = localStorage.getItem("expenshare_user")
-    if (!storedUser) return
-    const userData = JSON.parse(storedUser)
-    setUserId(userData.id)
-    setCurrentUserId(String(userData.id))
-    // Charger les projets dont l'utilisateur est propriétaire
+    if (!userId) return
     ;(async () => {
       try {
-        const projs = await (db as any).getUserProjects(userData.id)
+        const projs = await (db as any).getUserProjects(userId)
         const owned = new Set<number>()
         for (const p of (projs as any[])) {
-          if (String(p.created_by) === String(userData.id) && p.id != null) owned.add(Number(p.id))
+          if (String(p.created_by) === String(userId) && p.id != null) owned.add(Number(p.id))
         }
         setOwnedProjectIds(owned)
       } catch {}
     })()
-  }, [])
+  }, [userId])
 
   const { projects, isLoading: projectsLoading } = useUserProjects(userId)
   const { stats, isLoading: statsLoading } = useProjectStats(selectedProjectId ? Number.parseInt(selectedProjectId) : 0, displayCurrency === 'CFA' ? 'CFA' : displayCurrency)

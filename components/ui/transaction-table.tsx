@@ -142,11 +142,20 @@ export function TransactionTable({
     const notes: Note[] = await db.getNotesByTransaction(tx.id)
     const items: MediaItem[] = []
 
+    const isLegacySupabaseUrl = (url: string | null | undefined): boolean =>
+      typeof url === 'string' && url.includes('supabase.co/storage')
+
     for (const n of notes) {
-      if (n.content_type === "image") items.push({ type: "image", content: n.content, title: n.file_path || "Image" })
-      else if (n.content_type === "video") items.push({ type: "video", content: n.content, title: n.file_path || "Vidéo" })
-      else if (n.content_type === "audio") items.push({ type: "audio", content: n.content, title: n.file_path || "Audio" })
-      else if (n.content_type === "text" && n.file_path) items.push({ type: "document", content: n.content, title: n.file_path })
+      if (n.content_type === "image") {
+        if (isLegacySupabaseUrl(n.content)) items.push({ type: "text", content: "(Image non disponible — ancienne version)", title: n.file_path || "Image" })
+        else items.push({ type: "image", content: n.content, title: n.file_path || "Image" })
+      } else if (n.content_type === "video") {
+        if (isLegacySupabaseUrl(n.content)) items.push({ type: "text", content: "(Vidéo non disponible — ancienne version)", title: n.file_path || "Vidéo" })
+        else items.push({ type: "video", content: n.content, title: n.file_path || "Vidéo" })
+      } else if (n.content_type === "audio") {
+        if (isLegacySupabaseUrl(n.content)) items.push({ type: "text", content: "(Audio non disponible — ancienne version)", title: n.file_path || "Audio" })
+        else items.push({ type: "audio", content: n.content, title: n.file_path || "Audio" })
+      } else if (n.content_type === "text" && n.file_path) items.push({ type: "document", content: n.content, title: n.file_path })
       else if (n.content_type === "text" && !n.file_path && n.content?.trim()) items.push({ type: "text", content: n.content, title: "Note" })
     }
     if (tx.description && !/^data:/.test(String(tx.description)) && String(tx.description).trim()) {
