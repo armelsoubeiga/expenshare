@@ -1168,7 +1168,10 @@ class TursoDatabase {
           sql: 'INSERT INTO notes (transaction_id, content_type, content, file_path, created_at) VALUES (?, ?, ?, ?, ?) RETURNING id',
           args: [Number(data.transaction_id), data.content_type, data.content ?? null, data.file_path ?? null, new Date().toISOString()],
         })
-        return Number(rowToObj(r.rows[0], r.columns).id)
+        const rowId = r.rows[0] ? rowToObj(r.rows[0], r.columns).id : undefined
+        return (rowId != null && !Number.isNaN(Number(rowId)))
+          ? Number(rowId)
+          : Number(r.lastInsertRowid ?? 0)
       } catch (e: any) {
         console.error('[ExpenseShare] notes.add failed:', e)
         throw e
