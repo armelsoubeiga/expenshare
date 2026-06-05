@@ -36,7 +36,6 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
   const audioRef = useRef<MediaUploadHandle | null>(null)
   const amountRef = useRef<HTMLInputElement>(null)
 
-  // Devise et taux de conversion
   const [eurToCfa, setEurToCfa] = useState(655.957)
   const [eurToUsd, setEurToUsd] = useState(1.0)
   const [cfaRateConfigured, setCfaRateConfigured] = useState(false)
@@ -51,7 +50,6 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
   const currencyLabel = (c: string) => c === 'CFA' ? 'F CFA' : c === 'USD' ? 'USD $' : 'EUR €'
   const currencySymbol = entryCurrency === "CFA" ? "F CFA" : entryCurrency === "USD" ? "$" : "€"
 
-  // ─── Chargement projets ───────────────────────────────────────────────────
   const loadProjects = useCallback(async () => {
     if (!db) return
     try {
@@ -61,12 +59,10 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
       const raw = await db.getUserProjects(user.id)
       const list = ((raw ?? []) as unknown as ProjectWithId[]).filter(p => p?.id != null)
       setProjects(list)
-      // Auto-sélection si un seul projet
       if (!projectId && list.length === 1) setProjectId(String(list[0].id))
     } catch {}
   }, [db, projectId])
 
-  // ─── Chargement catégories ────────────────────────────────────────────────
   const loadCategories = useCallback(async (pid: number) => {
     if (!db) return
     try {
@@ -91,7 +87,6 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
     setEntryCurrencyOverride(null)
   }, [projectId, type, loadCategories])
 
-  // Charger les taux du projet quand le projet ou db change
   useEffect(() => {
     if (!db || !projectId) return
     ;(async () => {
@@ -110,7 +105,6 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
     })()
   }, [db, projectId])
 
-  // Convertit un montant depuis entryCurrency vers projectCurrencyCode
   const convertToProjectCurrency = useCallback((amt: number): number => {
     if (entryCurrency === projectCurrencyCode) return amt
     let inEur: number
@@ -141,18 +135,16 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
     }).format(amt)
   }, [projectCurrencyCode])
 
-  // ─── Ajout de catégorie inline ────────────────────────────────────────────
   const handleAddCategory = useCallback(async (name: string, parentId: number | null): Promise<number> => {
     if (!db || !projectId) throw new Error("Projet non sélectionné")
     const parent = parentId ? categories.find(c => c.id === parentId) : null
     const level = parent ? 2 : 1
-    const newId = await db.categories.add({
+    return db.categories.add({
       project_id: Number(projectId),
       name,
       parent_id: parentId ?? undefined,
       level,
     })
-    return newId
   }, [db, projectId, categories])
 
   const handleCategoryAdded = useCallback((newId: number, name: string, parentId: number | null) => {
@@ -160,11 +152,9 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
       ...prev,
       { id: newId, project_id: Number(projectId), name, parent_id: parentId ?? undefined, level: parentId ? 2 : 1 } as Category & { id: number }
     ])
-    // Dispatch pour mettre à jour les autres composants
     window.dispatchEvent(new CustomEvent("expenshare:project-updated"))
   }, [projectId])
 
-  // ─── Soumission ───────────────────────────────────────────────────────────
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError("")
@@ -184,8 +174,6 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
 
       const selectedCat = categories.find(c => String(c.id) === categoryId)
       const txTitle = title.trim() || selectedCat?.name || ""
-
-      // Convertir vers la devise du projet si nécessaire
       const submitAmount = convertToProjectCurrency(rawAmount)
 
       const txId = await db.transactions.add({
@@ -210,7 +198,6 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
             file_path: media.name,
           } as Note)
         }
-        // Déclencher un rafraîchissement des composants qui affichent les transactions
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('expenshare:project-updated'))
         }
@@ -225,7 +212,6 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
     }
   }
 
-  // ─── Succès ───────────────────────────────────────────────────────────────
   if (success) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[50vh] p-8 gap-4">
@@ -243,7 +229,6 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
   return (
     <div className="max-w-lg mx-auto px-4 py-6 pb-10 space-y-5">
 
-      {/* ─── Type switcher ─── */}
       <div className="flex gap-2 p-1 bg-muted rounded-2xl">
         {(["expense", "budget"] as const).map(t => (
           <button
@@ -266,7 +251,6 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
 
       <form onSubmit={handleSubmit} className="space-y-5">
 
-        {/* ─── Montant ─── */}
         <div
           onClick={() => amountRef.current?.focus()}
           className={`bg-card border-2 rounded-2xl p-5 cursor-text transition-colors ${
@@ -297,7 +281,6 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
             </span>
           </div>
 
-          {/* Sélecteur de devise */}
           {projectId && (
             <div className="flex items-center gap-1.5 mt-3 flex-wrap">
               {(['EUR', 'CFA', 'USD'] as const).map(c => (
@@ -327,7 +310,6 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
             </div>
           )}
 
-          {/* Aperçu de la conversion */}
           {entryCurrency !== projectCurrencyCode && amount && !isNaN(Number(amount.replace(',', '.'))) && Number(amount.replace(',', '.')) > 0 && (
             <p className="text-xs text-muted-foreground mt-2">
               ≈ <span className="font-semibold">{formatPreview(convertToProjectCurrency(Number(amount.replace(',', '.'))))}</span>
@@ -336,7 +318,6 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
           )}
         </div>
 
-        {/* ─── Projet ─── */}
         <div className="space-y-2">
           <label className="text-sm font-semibold">Projet *</label>
           {projects.length === 0 ? (
@@ -367,7 +348,6 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
           )}
         </div>
 
-        {/* ─── Catégorie (dépense) ─── */}
         {type === "expense" && (
           <div className="space-y-2">
             <label className="text-sm font-semibold">
@@ -389,7 +369,6 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
           </div>
         )}
 
-        {/* ─── Titre budget ─── */}
         {type === "budget" && (
           <div className="space-y-2">
             <label className="text-sm font-semibold">Titre du budget *</label>
@@ -404,7 +383,6 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
           </div>
         )}
 
-        {/* ─── Description optionnelle (dépense) ─── */}
         {type === "expense" && (
           <div className="space-y-2">
             <label className="text-sm font-semibold text-muted-foreground">Description (optionnelle)</label>
@@ -418,7 +396,6 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
           </div>
         )}
 
-        {/* ─── Pièces jointes ─── */}
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <label className="text-sm font-semibold">Pièces jointes</label>
@@ -427,7 +404,6 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
             )}
           </div>
 
-          {/* Boutons media */}
           <div className="grid grid-cols-5 gap-1.5">
             {[
               { icon: Camera, label: "Photo", id: "tv-img", color: "text-blue-500", bg: "bg-blue-50 dark:bg-blue-950/20" },
@@ -463,7 +439,6 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
             ))}
           </div>
 
-          {/* Note textarea */}
           {showNote && (
             <div className="relative">
               <textarea
@@ -484,7 +459,6 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
             </div>
           )}
 
-          {/* Fichiers joints */}
           {mediaFiles.length > 0 && (
             <MediaUpload
               previewOnly
@@ -495,7 +469,6 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
             />
           )}
 
-          {/* Inputs cachés */}
           <div className="hidden">
             <MediaUpload id="tv-img" onMediaAdd={m => setMediaFiles(p => [...p, m])} onMediaRemove={id => setMediaFiles(p => p.filter(m => m.id !== id))} mediaFiles={mediaFiles} maxFiles={10} acceptedTypes={["image/*"]} />
             <MediaUpload id="tv-aud" ref={audioRef} onMediaAdd={m => setMediaFiles(p => [...p, m])} onMediaRemove={id => setMediaFiles(p => p.filter(m => m.id !== id))} mediaFiles={mediaFiles} maxFiles={5} acceptedTypes={["audio/*"]} onRecordingStart={() => { setIsRecordingAudio(true); setRecordingSeconds(0) }} onRecordingStop={() => setIsRecordingAudio(false)} onRecordingTimeTick={s => setRecordingSeconds(s)} />
@@ -504,7 +477,6 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
           </div>
         </div>
 
-        {/* ─── Erreur ─── */}
         {error && (
           <div className="flex items-start gap-2 p-3 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 rounded-xl">
             <span className="text-red-500 text-sm flex-1">{error}</span>
@@ -512,7 +484,6 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
           </div>
         )}
 
-        {/* ─── Actions ─── */}
         <div className="flex gap-3 pt-2">
           <button
             type="button"

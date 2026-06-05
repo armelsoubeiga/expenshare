@@ -28,7 +28,6 @@ export function EditTransactionView({ transactionId, onBack, onSuccess }: EditTr
   const [success, setSuccess] = useState(false)
   const [error, setError] = useState("")
 
-  // Transaction fields
   const [type, setType] = useState<"expense" | "budget">("expense")
   const [projectId, setProjectId] = useState(0)
   const [projectName, setProjectName] = useState("")
@@ -39,20 +38,14 @@ export function EditTransactionView({ transactionId, onBack, onSuccess }: EditTr
   const [description, setDescription] = useState("")
   const [showNote, setShowNote] = useState(false)
 
-  // Categories
   const [categories, setCategories] = useState<(Category & { id: number })[]>([])
-
-  // Existing media (notes already in DB)
   const [existingNotes, setExistingNotes] = useState<ExistingNote[]>([])
   const [deletedNoteIds, setDeletedNoteIds] = useState<Set<number>>(new Set())
-
-  // New media — managed directly by this component
   const [mediaFiles, setMediaFiles] = useState<MediaFile[]>([])
   const [uploading, setUploading] = useState(false)
   const [isRecordingAudio, setIsRecordingAudio] = useState(false)
   const [recordingSeconds, setRecordingSeconds] = useState(0)
 
-  // Refs pour les inputs fichier (pas de dépendance aux IDs DOM)
   const imgInputRef = useRef<HTMLInputElement>(null)
   const vidInputRef = useRef<HTMLInputElement>(null)
   const docInputRef = useRef<HTMLInputElement>(null)
@@ -61,7 +54,6 @@ export function EditTransactionView({ transactionId, onBack, onSuccess }: EditTr
   const currencySymbol = projectCurrency === "CFA" ? "F CFA" : projectCurrency === "USD" ? "$" : "€"
   const recFmt = `${Math.floor(recordingSeconds / 60)}:${String(recordingSeconds % 60).padStart(2, "0")}`
 
-  // ─── Upload vers B2 ──────────────────────────────────────────────────────────
   const uploadToB2 = async (base64: string, contentType: string, extension: string): Promise<string> => {
     const resp = await fetch("/api/upload", {
       method: "POST",
@@ -95,14 +87,13 @@ export function EditTransactionView({ transactionId, onBack, onSuccess }: EditTr
           : file.type.startsWith("video/") ? "video"
           : "file"
         const url = await uploadToB2(base64, mediaType, ext)
-        const media: MediaFile = {
+        setMediaFiles(prev => [...prev, {
           id: `${Date.now()}${Math.random().toString(36).slice(2, 9)}`,
           type: mediaType,
           name: file.name,
           size: file.size,
           url,
-        }
-        setMediaFiles(prev => [...prev, media])
+        }])
       } catch (err) {
         setError("Erreur upload : " + (err instanceof Error ? err.message : String(err)))
       }
@@ -110,7 +101,6 @@ export function EditTransactionView({ transactionId, onBack, onSuccess }: EditTr
     setUploading(false)
   }, [])
 
-  // ─── Chargement de la transaction ────────────────────────────────────────────
   const loadTransaction = useCallback(async () => {
     if (!database || !isReady) return
     setLoading(true)
@@ -157,7 +147,6 @@ export function EditTransactionView({ transactionId, onBack, onSuccess }: EditTr
 
   useEffect(() => { void loadTransaction() }, [loadTransaction])
 
-  // ─── Ajout de catégorie inline ───────────────────────────────────────────────
   const handleAddCategory = useCallback(async (name: string, parentId: number | null): Promise<number> => {
     if (!database) throw new Error("DB non disponible")
     const parent = parentId ? categories.find(c => c.id === parentId) : null
@@ -174,7 +163,6 @@ export function EditTransactionView({ transactionId, onBack, onSuccess }: EditTr
     ])
   }, [projectId])
 
-  // ─── Sauvegarde ──────────────────────────────────────────────────────────────
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError("")
@@ -235,7 +223,6 @@ export function EditTransactionView({ transactionId, onBack, onSuccess }: EditTr
     }
   }
 
-  // ─── Suppression ─────────────────────────────────────────────────────────────
   const handleDelete = async () => {
     if (!database) return
     setDeleting(true)
@@ -274,7 +261,6 @@ export function EditTransactionView({ transactionId, onBack, onSuccess }: EditTr
   return (
     <div className="max-w-lg mx-auto px-4 py-6 pb-10 space-y-5">
 
-      {/* ─── Header ─── */}
       <div className="flex items-center gap-3">
         <button onClick={onBack} className="p-2 rounded-xl hover:bg-muted transition-colors text-muted-foreground hover:text-foreground">
           <ArrowLeft className="h-5 w-5" />
@@ -298,7 +284,6 @@ export function EditTransactionView({ transactionId, onBack, onSuccess }: EditTr
         )}
       </div>
 
-      {/* ─── Type (lecture seule) ─── */}
       <div className="flex gap-2 p-1 bg-muted rounded-2xl">
         {(["expense", "budget"] as const).map(t => (
           <div key={t} className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-semibold ${type === t ? t === "expense" ? "bg-white dark:bg-card shadow text-red-600" : "bg-white dark:bg-card shadow text-blue-600" : "text-muted-foreground/40"}`}>
@@ -310,7 +295,6 @@ export function EditTransactionView({ transactionId, onBack, onSuccess }: EditTr
 
       <form onSubmit={handleSubmit} className="space-y-5">
 
-        {/* ─── Montant ─── */}
         <div className={`bg-card border-2 rounded-2xl p-5 cursor-text transition-colors ${amount ? type === "expense" ? "border-red-200 dark:border-red-800" : "border-blue-200 dark:border-blue-800" : "border-border"}`}>
           <label className="text-xs text-muted-foreground font-semibold uppercase tracking-wider mb-2 block">Montant *</label>
           <div className="flex items-baseline gap-3">
@@ -323,7 +307,6 @@ export function EditTransactionView({ transactionId, onBack, onSuccess }: EditTr
           </div>
         </div>
 
-        {/* ─── Catégorie ─── */}
         {type === "expense" && (
           <div className="space-y-2">
             <label className="text-sm font-semibold">Catégorie *</label>
@@ -335,7 +318,6 @@ export function EditTransactionView({ transactionId, onBack, onSuccess }: EditTr
           </div>
         )}
 
-        {/* ─── Titre / Description ─── */}
         <div className="space-y-2">
           <label className="text-sm font-semibold text-muted-foreground">{type === "budget" ? "Titre *" : "Description (optionnelle)"}</label>
           <input
@@ -345,7 +327,6 @@ export function EditTransactionView({ transactionId, onBack, onSuccess }: EditTr
           />
         </div>
 
-        {/* ─── Pièces jointes ─── */}
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <label className="text-sm font-semibold">Pièces jointes</label>
@@ -356,14 +337,13 @@ export function EditTransactionView({ transactionId, onBack, onSuccess }: EditTr
             )}
           </div>
 
-          {/* Boutons — même design que le formulaire de saisie */}
           <div className="grid grid-cols-5 gap-1.5">
             {[
-              { icon: Camera,   label: "Photo",  color: "text-blue-500",   bg: "bg-blue-50 dark:bg-blue-950/20",   action: () => imgInputRef.current?.click() },
-              { icon: Mic,      label: isRecordingAudio ? recFmt : "Audio", color: isRecordingAudio ? "text-red-500" : "text-green-500", bg: isRecordingAudio ? "bg-red-50 dark:bg-red-950/20 animate-pulse" : "bg-green-50 dark:bg-green-950/20", action: () => { if (audioUploadRef.current) { audioUploadRef.current.getRecordingState() ? audioUploadRef.current.stopAudioRecording() : audioUploadRef.current.startAudioRecording() } } },
-              { icon: Video,    label: "Vidéo",  color: "text-purple-500", bg: "bg-purple-50 dark:bg-purple-950/20", action: () => vidInputRef.current?.click() },
-              { icon: Paperclip,label: "Doc",    color: "text-orange-500", bg: "bg-orange-50 dark:bg-orange-950/20", action: () => docInputRef.current?.click() },
-              { icon: FileText, label: "Note",   color: "text-amber-500",  bg: "bg-amber-50 dark:bg-amber-950/20",  action: () => setShowNote(v => !v) },
+              { icon: Camera,    label: "Photo",  color: "text-blue-500",   bg: "bg-blue-50 dark:bg-blue-950/20",    action: () => imgInputRef.current?.click() },
+              { icon: Mic,       label: isRecordingAudio ? recFmt : "Audio", color: isRecordingAudio ? "text-red-500" : "text-green-500", bg: isRecordingAudio ? "bg-red-50 dark:bg-red-950/20 animate-pulse" : "bg-green-50 dark:bg-green-950/20", action: () => { if (audioUploadRef.current) { audioUploadRef.current.getRecordingState() ? audioUploadRef.current.stopAudioRecording() : audioUploadRef.current.startAudioRecording() } } },
+              { icon: Video,     label: "Vidéo",  color: "text-purple-500", bg: "bg-purple-50 dark:bg-purple-950/20", action: () => vidInputRef.current?.click() },
+              { icon: Paperclip, label: "Doc",    color: "text-orange-500", bg: "bg-orange-50 dark:bg-orange-950/20", action: () => docInputRef.current?.click() },
+              { icon: FileText,  label: "Note",   color: "text-amber-500",  bg: "bg-amber-50 dark:bg-amber-950/20",  action: () => setShowNote(v => !v) },
             ].map(({ icon: Icon, label, color, bg, action }) => (
               <button key={label} type="button" onClick={action} className={`flex flex-col items-center gap-1 py-2.5 rounded-xl ${bg} hover:opacity-80 transition-all`}>
                 <Icon className={`h-4 w-4 ${color}`} />
@@ -372,7 +352,6 @@ export function EditTransactionView({ transactionId, onBack, onSuccess }: EditTr
             ))}
           </div>
 
-          {/* Indicateur upload en cours */}
           {uploading && (
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -380,7 +359,6 @@ export function EditTransactionView({ transactionId, onBack, onSuccess }: EditTr
             </div>
           )}
 
-          {/* Note textarea */}
           {showNote && (
             <div className="relative">
               <textarea
@@ -394,7 +372,6 @@ export function EditTransactionView({ transactionId, onBack, onSuccess }: EditTr
             </div>
           )}
 
-          {/* Médias existants (déjà en base) */}
           {visibleNotes.length > 0 && (
             <div className="space-y-1.5">
               {visibleNotes.map(note => (
@@ -416,7 +393,6 @@ export function EditTransactionView({ transactionId, onBack, onSuccess }: EditTr
             </div>
           )}
 
-          {/* Preview des nouveaux médias (même composant que la saisie) */}
           {mediaFiles.length > 0 && (
             <MediaUpload
               previewOnly
@@ -427,12 +403,10 @@ export function EditTransactionView({ transactionId, onBack, onSuccess }: EditTr
             />
           )}
 
-          {/* Inputs fichier directs (refs React — pas de querySelector/getElementById) */}
           <input ref={imgInputRef} type="file" multiple accept="image/*" className="hidden" onChange={handleFileChange} />
           <input ref={vidInputRef} type="file" accept="video/*" className="hidden" onChange={handleFileChange} />
           <input ref={docInputRef} type="file" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,application/pdf,application/msword,text/plain,text/csv" className="hidden" onChange={handleFileChange} />
 
-          {/* Instance cachée uniquement pour l'enregistrement audio (via ref) */}
           <div className="hidden">
             <MediaUpload
               ref={audioUploadRef}
@@ -448,7 +422,6 @@ export function EditTransactionView({ transactionId, onBack, onSuccess }: EditTr
           </div>
         </div>
 
-        {/* ─── Erreur ─── */}
         {error && (
           <div className="flex items-start gap-2 p-3 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 rounded-xl">
             <span className="text-red-500 text-sm flex-1">{error}</span>
@@ -456,7 +429,6 @@ export function EditTransactionView({ transactionId, onBack, onSuccess }: EditTr
           </div>
         )}
 
-        {/* ─── Actions ─── */}
         <div className="flex gap-3 pt-2">
           <button type="button" onClick={onBack} className="flex-1 h-10 rounded-xl border border-border bg-card hover:bg-muted transition-colors text-sm font-medium">Annuler</button>
           <button type="submit" disabled={saving || uploading} className={`flex-1 h-10 rounded-xl text-white font-semibold text-sm transition-all flex items-center justify-center gap-2 ${type === "expense" ? "bg-red-500 hover:bg-red-600 disabled:bg-red-300" : "bg-blue-500 hover:bg-blue-600 disabled:bg-blue-300"}`}>

@@ -192,10 +192,8 @@ export const MediaUpload = forwardRef<MediaUploadHandle, MediaUploadProps>(funct
 
   return (
     <div className="space-y-3">
-      {/* ─── Boutons d'action ─── */}
       {!previewOnly && (
         <div className="flex flex-wrap gap-2">
-          {/* Input fichiers génériques (multi) */}
           <input
             id={id}
             ref={fileInputRef}
@@ -205,7 +203,6 @@ export const MediaUpload = forwardRef<MediaUploadHandle, MediaUploadProps>(funct
             onChange={handleFileSelect}
             className="hidden"
           />
-          {/* Input photo (camera sur mobile) */}
           <input
             ref={photoInputRef}
             type="file"
@@ -215,7 +212,6 @@ export const MediaUpload = forwardRef<MediaUploadHandle, MediaUploadProps>(funct
             onChange={handleFileSelect}
             className="hidden"
           />
-          {/* Input vidéo (camera vidéo sur mobile) */}
           <input
             ref={videoInputRef}
             type="file"
@@ -271,7 +267,6 @@ export const MediaUpload = forwardRef<MediaUploadHandle, MediaUploadProps>(funct
         </div>
       )}
 
-      {/* ─── Grille d'images ─── */}
       {images.length > 0 && (
         <div className={`grid gap-2 ${images.length === 1 ? "grid-cols-1" : images.length === 2 ? "grid-cols-2" : "grid-cols-3"}`}>
           {images.map(media => (
@@ -284,7 +279,6 @@ export const MediaUpload = forwardRef<MediaUploadHandle, MediaUploadProps>(funct
                 sizes="(max-width: 640px) 33vw, 150px"
                 unoptimized
               />
-              {/* Overlay au survol */}
               <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
                 <button
                   type="button"
@@ -294,7 +288,6 @@ export const MediaUpload = forwardRef<MediaUploadHandle, MediaUploadProps>(funct
                   <X className="h-3.5 w-3.5" />
                 </button>
               </div>
-              {/* Taille */}
               <div className="absolute bottom-1 left-1 right-1">
                 <span className="text-[10px] text-white bg-black/50 rounded px-1">{formatSize(media.size)}</span>
               </div>
@@ -303,12 +296,10 @@ export const MediaUpload = forwardRef<MediaUploadHandle, MediaUploadProps>(funct
         </div>
       )}
 
-      {/* ─── Liste audio / vidéo / documents ─── */}
       {others.length > 0 && (
         <div className="space-y-1.5">
           {others.map(media => (
             <div key={media.id} className="flex items-center gap-3 p-2.5 rounded-xl border border-border bg-muted/30">
-              {/* Icône type */}
               <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${
                 media.type === "audio" ? "bg-green-100 dark:bg-green-950/30" :
                 media.type === "video" ? "bg-purple-100 dark:bg-purple-950/30" :
@@ -347,7 +338,6 @@ export const MediaUpload = forwardRef<MediaUploadHandle, MediaUploadProps>(funct
         </div>
       )}
 
-      {/* Compteur */}
       {mediaFiles.length > 0 && (
         <p className="text-xs text-muted-foreground">
           {mediaFiles.length} / {maxFiles} fichier{mediaFiles.length > 1 ? "s" : ""}
