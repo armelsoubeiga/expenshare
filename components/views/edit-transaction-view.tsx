@@ -1,10 +1,12 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { Loader2, CheckCircle2, TrendingDown, TrendingUp, X, Trash2, ArrowLeft } from "lucide-react"
+import { Loader2, CheckCircle2, TrendingDown, TrendingUp, X, Trash2, ArrowLeft, Paperclip } from "lucide-react"
 import { CategoryPicker } from "@/components/forms/category-picker"
+import { MediaUpload } from "@/components/media/media-upload"
 import { useDatabase } from "@/hooks/use-database"
 import type { TursoDatabaseInstance } from "@/lib/database-turso"
+import type { MediaFile } from "@/lib/media-types"
 import type { Category, Note } from "@/lib/types"
 
 interface EditTransactionViewProps {
@@ -42,6 +44,10 @@ export function EditTransactionView({ transactionId, onBack, onSuccess }: EditTr
   // Existing notes (media)
   const [existingNotes, setExistingNotes] = useState<ExistingNote[]>([])
   const [deletedNoteIds, setDeletedNoteIds] = useState<Set<number>>(new Set())
+
+  // New media being added
+  const [mediaFiles, setMediaFiles] = useState<MediaFile[]>([])
+  const [showMediaUpload, setShowMediaUpload] = useState(false)
 
   const currencySymbol = projectCurrency === "CFA" ? "F CFA" : projectCurrency === "USD" ? "$" : "€"
 
@@ -135,6 +141,20 @@ export function EditTransactionView({ transactionId, onBack, onSuccess }: EditTr
       // Supprimer les notes marquées pour suppression
       for (const noteId of deletedNoteIds) {
         await database.notes.delete(noteId)
+      }
+
+      // Ajouter les nouveaux médias
+      for (const media of mediaFiles) {
+        await database.notes.add({
+          transaction_id: transactionId,
+          content_type: media.type === "image" ? "image" : media.type === "audio" ? "audio" : media.type === "video" ? "video" : "text",
+          content: media.url,
+          file_path: media.name,
+        } as Note)
+      }
+
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("expenshare:project-updated"))
       }
 
       setSuccess(true)
@@ -318,6 +338,31 @@ export function EditTransactionView({ transactionId, onBack, onSuccess }: EditTr
             rows={3}
             className="w-full px-4 py-3 rounded-xl border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary transition-all text-sm resize-none"
           />
+        </div>
+
+        {/* ─── Ajouter des médias ─── */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <label className="text-sm font-semibold text-muted-foreground">Ajouter des médias</label>
+            {!showMediaUpload && (
+              <button
+                type="button"
+                onClick={() => setShowMediaUpload(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-border text-xs font-medium hover:bg-muted transition-colors"
+              >
+                <Paperclip className="h-3.5 w-3.5" />
+                Joindre
+              </button>
+            )}
+          </div>
+          {showMediaUpload && (
+            <MediaUpload
+              mediaFiles={mediaFiles}
+              onMediaAdd={(media) => setMediaFiles(prev => [...prev, media])}
+              onMediaRemove={(id) => setMediaFiles(prev => prev.filter(m => m.id !== id))}
+              maxFiles={10}
+            />
+          )}
         </div>
 
         {/* ─── Pièces jointes existantes ─── */}

@@ -879,7 +879,10 @@ class TursoDatabase {
           sql: 'INSERT INTO transactions (project_id, user_id, category_id, type, amount, amount_eur, amount_cfa, amount_usd, title, description, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id',
           args: [basePayload.project_id, basePayload.user_id, basePayload.category_id, data.type, amount_eur, amount_eur, amount_cfa, amount_usd, data.title, data.description ?? null, new Date().toISOString()],
         })
-        const id = Number(rowToObj(r.rows[0], r.columns).id)
+        const rowId = r.rows[0] ? rowToObj(r.rows[0], r.columns).id : undefined
+        const id = (rowId != null && !Number.isNaN(Number(rowId)))
+          ? Number(rowId)
+          : Number(r.lastInsertRowid ?? 0)
 
         try {
           if (typeof window !== 'undefined') {

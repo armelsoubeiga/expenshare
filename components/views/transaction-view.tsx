@@ -198,7 +198,7 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
         description,
       })
 
-      if (txId) {
+      if (txId && !Number.isNaN(txId)) {
         if (description.trim()) {
           await db.notes.add({ transaction_id: txId, content_type: "text", content: description.trim(), file_path: undefined } as Note)
         }
@@ -209,6 +209,10 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
             content: media.url,
             file_path: media.name,
           } as Note)
+        }
+        // Déclencher un rafraîchissement des composants qui affichent les transactions
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('expenshare:project-updated'))
         }
       }
 
