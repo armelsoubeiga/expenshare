@@ -487,6 +487,7 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
           {/* Fichiers joints */}
           {mediaFiles.length > 0 && (
             <MediaUpload
+              previewOnly
               onMediaAdd={m => setMediaFiles(p => [...p, m])}
               onMediaRemove={id => setMediaFiles(p => p.filter(m => m.id !== id))}
               mediaFiles={mediaFiles}

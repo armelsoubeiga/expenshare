@@ -419,6 +419,7 @@ export function EditTransactionView({ transactionId, onBack, onSuccess }: EditTr
           {/* Preview des nouveaux médias (même composant que la saisie) */}
           {mediaFiles.length > 0 && (
             <MediaUpload
+              previewOnly
               onMediaAdd={m => setMediaFiles(p => [...p, m])}
               onMediaRemove={id => setMediaFiles(p => p.filter(m => m.id !== id))}
               mediaFiles={mediaFiles}

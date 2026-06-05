@@ -23,6 +23,7 @@ interface MediaUploadProps {
   onRecordingStart?: () => void
   onRecordingStop?: (blob?: Blob) => void
   onRecordingTimeTick?: (seconds: number) => void
+  previewOnly?: boolean
 }
 
 export const MediaUpload = forwardRef<MediaUploadHandle, MediaUploadProps>(function MediaUpload(
@@ -36,6 +37,7 @@ export const MediaUpload = forwardRef<MediaUploadHandle, MediaUploadProps>(funct
     onRecordingStart,
     onRecordingStop,
     onRecordingTimeTick,
+    previewOnly = false,
   }: MediaUploadProps,
   ref
 ) {
@@ -86,7 +88,7 @@ export const MediaUpload = forwardRef<MediaUploadHandle, MediaUploadProps>(funct
           : "file"
         const url = await uploadToB2(base64, mediaType, ext)
         onMediaAdd({
-          id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+          id: Date.now().toString() + Math.random().toString(36).slice(2, 11),
           type: mediaType,
           name: file.name,
           size: file.size,
@@ -191,81 +193,83 @@ export const MediaUpload = forwardRef<MediaUploadHandle, MediaUploadProps>(funct
   return (
     <div className="space-y-3">
       {/* ─── Boutons d'action ─── */}
-      <div className="flex flex-wrap gap-2">
-        {/* Input fichiers génériques (multi) */}
-        <input
-          id={id}
-          ref={fileInputRef}
-          type="file"
-          multiple
-          accept={acceptedTypes.join(",")}
-          onChange={handleFileSelect}
-          className="hidden"
-        />
-        {/* Input photo (camera sur mobile) */}
-        <input
-          ref={photoInputRef}
-          type="file"
-          multiple
-          accept="image/*"
-          capture="environment"
-          onChange={handleFileSelect}
-          className="hidden"
-        />
-        {/* Input vidéo (camera vidéo sur mobile) */}
-        <input
-          ref={videoInputRef}
-          type="file"
-          accept="video/*"
-          capture="environment"
-          onChange={handleFileSelect}
-          className="hidden"
-        />
+      {!previewOnly && (
+        <div className="flex flex-wrap gap-2">
+          {/* Input fichiers génériques (multi) */}
+          <input
+            id={id}
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept={acceptedTypes.join(",")}
+            onChange={handleFileSelect}
+            className="hidden"
+          />
+          {/* Input photo (camera sur mobile) */}
+          <input
+            ref={photoInputRef}
+            type="file"
+            multiple
+            accept="image/*"
+            capture="environment"
+            onChange={handleFileSelect}
+            className="hidden"
+          />
+          {/* Input vidéo (camera vidéo sur mobile) */}
+          <input
+            ref={videoInputRef}
+            type="file"
+            accept="video/*"
+            capture="environment"
+            onChange={handleFileSelect}
+            className="hidden"
+          />
 
-        <button
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={!canAdd}
-          className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-border text-sm hover:bg-muted transition-colors disabled:opacity-40"
-        >
-          <Upload className="h-4 w-4" />
-          Fichier{uploading ? "…" : ""}
-        </button>
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={!canAdd}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-border text-sm hover:bg-muted transition-colors disabled:opacity-40"
+          >
+            <Upload className="h-4 w-4" />
+            Fichier{uploading ? "…" : ""}
+          </button>
 
-        <button
-          type="button"
-          onClick={() => photoInputRef.current?.click()}
-          disabled={!canAdd}
-          className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-border text-sm hover:bg-muted transition-colors disabled:opacity-40"
-        >
-          <Camera className="h-4 w-4" />
-          Photo
-        </button>
+          <button
+            type="button"
+            onClick={() => photoInputRef.current?.click()}
+            disabled={!canAdd}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-border text-sm hover:bg-muted transition-colors disabled:opacity-40"
+          >
+            <Camera className="h-4 w-4" />
+            Photo
+          </button>
 
-        <button
-          type="button"
-          onClick={() => videoInputRef.current?.click()}
-          disabled={!canAdd}
-          className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-border text-sm hover:bg-muted transition-colors disabled:opacity-40"
-        >
-          <Video className="h-4 w-4" />
-          Vidéo
-        </button>
+          <button
+            type="button"
+            onClick={() => videoInputRef.current?.click()}
+            disabled={!canAdd}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-border text-sm hover:bg-muted transition-colors disabled:opacity-40"
+          >
+            <Video className="h-4 w-4" />
+            Vidéo
+          </button>
 
-        <button
-          type="button"
-          onClick={isRecording ? stopRecording : startRecording}
-          disabled={!canAdd && !isRecording}
-          className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-sm transition-colors ${
-            isRecording
-              ? "border-red-500 bg-red-50 dark:bg-red-950/20 text-red-600 hover:bg-red-100"
-              : "border-border hover:bg-muted disabled:opacity-40"
-          }`}
-        >
-          <Mic className="h-4 w-4" />
-          {isRecording ? `Arrêter (${formatTime(recordingTime)})` : "Audio"}
-        </button>
-      </div>
+          <button
+            type="button"
+            onClick={isRecording ? stopRecording : startRecording}
+            disabled={!canAdd && !isRecording}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-sm transition-colors ${
+              isRecording
+                ? "border-red-500 bg-red-50 dark:bg-red-950/20 text-red-600 hover:bg-red-100"
+                : "border-border hover:bg-muted disabled:opacity-40"
+            }`}
+          >
+            <Mic className="h-4 w-4" />
+            {isRecording ? `Arrêter (${formatTime(recordingTime)})` : "Audio"}
+          </button>
+        </div>
+      )}
 
       {/* ─── Grille d'images ─── */}
       {images.length > 0 && (
