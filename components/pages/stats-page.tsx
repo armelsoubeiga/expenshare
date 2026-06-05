@@ -17,13 +17,13 @@ import { TransactionTable } from "@/components/ui/transaction-table"
 export function StatsPage() {
   const { navigate } = useNavigation()
   const [selectedProjectId, setSelectedProjectId] = useState<string>("")
-  const [userId, setUserId] = useState<number | null>(() => {
+  const [userId, setUserId] = useState<string | number | null>(() => {
     if (typeof window === "undefined") return null
     try {
       const stored = localStorage.getItem("expenshare_user")
       if (!stored) return null
-      const data = JSON.parse(stored) as { id?: number | string }
-      return data.id != null ? Number(data.id) : null
+      const data = JSON.parse(stored) as { id?: string | number }
+      return data.id ?? null
     } catch { return null }
   })
   const [currentUserId, setCurrentUserId] = useState<string>(() => {
@@ -31,7 +31,7 @@ export function StatsPage() {
     try {
       const stored = localStorage.getItem("expenshare_user")
       if (!stored) return ""
-      const data = JSON.parse(stored) as { id?: number | string }
+      const data = JSON.parse(stored) as { id?: string | number }
       return data.id != null ? String(data.id) : ""
     } catch { return "" }
   })

@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -33,7 +33,10 @@ export function HomePage() {
   const { transactions, isLoading: txLoading, refetch: refetchTx } = useRecentTransactions(10, activeProjectIds)
 
   // ── Load views ─────────────────────────────────────────────────────────────
-  const loadViews = async () => {
+  // Ref pour ne pas écraser la sélection manuelle de l'utilisateur lors des re-chargements
+  const hasInitializedView = useRef(false)
+
+  const loadViews = async (applyDefault = false) => {
     try {
       const stored = localStorage.getItem("expenshare_user")
       if (!stored) return
@@ -42,8 +45,12 @@ export function HomePage() {
       if (saved?.value) {
         const parsed = JSON.parse(saved.value) as ProjectView[]
         setViews(parsed)
-        const defaultView = parsed.find(v => v.isDefault)
-        if (defaultView) setActiveViewId(defaultView.id)
+        // Appliquer la vue par défaut uniquement au premier chargement
+        if (applyDefault && !hasInitializedView.current) {
+          const defaultView = parsed.find(v => v.isDefault)
+          if (defaultView) setActiveViewId(defaultView.id)
+          hasInitializedView.current = true
+        }
       }
     } catch {}
   }
@@ -57,6 +64,7 @@ export function HomePage() {
     } catch {}
   }
 
+  // Chargement initial : devise + vues (une seule fois au montage)
   useEffect(() => {
     const loadCurrency = async () => {
       try {
@@ -70,15 +78,20 @@ export function HomePage() {
       } catch {}
     }
     loadCurrency()
-    void loadViews()
+    void loadViews(true) // applyDefault = true uniquement au montage
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
+  // Écouteurs d'événements globaux
+  useEffect(() => {
     const onCurrencyChanged = (e: Event) => {
       const ev = e as CustomEvent<{ currency?: string }>
       if (ev.detail?.currency) { const n = normalizeCurrencyCode(ev.detail.currency); if (n) setDisplayCurrency(n) }
       refetchStats()
     }
     const onUpdated = () => { refetchStats(); refetchTx() }
-    const onViewsUpdated = () => { void loadViews() }
+    // Rechargement des vues sans écraser la sélection manuelle
+    const onViewsUpdated = () => { void loadViews(false) }
 
     window.addEventListener('expenshare:currency-changed', onCurrencyChanged)
     window.addEventListener('expenshare:project-updated', onUpdated)

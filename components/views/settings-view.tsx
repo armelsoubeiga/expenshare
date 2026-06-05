@@ -521,28 +521,33 @@ export function SettingsView({ onBack }: SettingsViewProps) {
                     <p className="text-xs text-red-600 bg-red-50 dark:bg-red-950/20 rounded-lg px-3 py-2">{formError}</p>
                   )}
 
-                  {/* Nom + emoji */}
-                  <div className="flex gap-2">
+                  {/* Nom */}
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Nom de la vue</label>
+                    <input
+                      type="text"
+                      placeholder="Ex : Chantier principal, Bureau…"
+                      value={formName}
+                      onChange={e => setFormName(e.target.value)}
+                      maxLength={30}
+                      autoFocus
+                      className="w-full h-11 px-3 rounded-xl border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary transition-all text-sm"
+                    />
+                  </div>
+
+                  {/* Emoji */}
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Icône</label>
                     <div className="flex flex-wrap gap-1.5 p-2 bg-muted/40 rounded-xl">
                       {VIEW_EMOJIS.map(e => (
                         <button
                           key={e}
                           onClick={() => setFormEmoji(e)}
-                          className={`text-lg w-8 h-8 flex items-center justify-center rounded-lg transition-all ${formEmoji === e ? 'bg-primary/20 ring-1 ring-primary' : 'hover:bg-muted'}`}
+                          className={`text-lg w-9 h-9 flex items-center justify-center rounded-lg transition-all ${formEmoji === e ? 'bg-primary/20 ring-2 ring-primary' : 'hover:bg-muted'}`}
                         >
                           {e}
                         </button>
                       ))}
-                    </div>
-                    <div className="flex-1">
-                      <input
-                        type="text"
-                        placeholder="Nom de la vue..."
-                        value={formName}
-                        onChange={e => setFormName(e.target.value)}
-                        maxLength={30}
-                        className="w-full h-11 px-3 rounded-xl border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary transition-all text-sm"
-                      />
                     </div>
                   </div>
 

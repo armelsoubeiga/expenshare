@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { X, ChevronLeft, ChevronRight, Download, ExternalLink, Copy, Check, Volume2, FileText, Film, ImageIcon } from "lucide-react"
+import { X, ChevronLeft, ChevronRight, Download, ExternalLink, Copy, Check, Volume2, FileText, Film, ImageIcon, AlertTriangle } from "lucide-react"
 import NextImage from "next/image"
 
 export type MediaItem = {
@@ -117,17 +117,7 @@ export function MediaViewer({ items, startIndex = 0, onClose }: MediaViewerProps
 
         {/* Image */}
         {current.type === "image" && (
-          <div className="relative w-full h-full max-w-4xl mx-auto flex items-center justify-center">
-            <NextImage
-              src={current.content}
-              alt={current.title}
-              fill
-              className="object-contain"
-              sizes="(max-width: 640px) 100vw, 80vw"
-              unoptimized
-              priority
-            />
-          </div>
+          <ImageWithFallback src={current.content} title={current.title} />
         )}
 
         {/* Audio */}
@@ -279,4 +269,43 @@ function typeLabel(type: MediaItem["type"]) {
     case "document": return "Document"
     default: return "Note"
   }
+}
+
+function ImageWithFallback({ src, title }: { src: string; title: string }) {
+  const [failed, setFailed] = useState(false)
+
+  if (failed) {
+    return (
+      <div className="flex flex-col items-center gap-4 w-full max-w-sm mx-auto">
+        <div className="w-20 h-20 rounded-2xl bg-white/10 flex items-center justify-center">
+          <AlertTriangle className="h-10 w-10 text-amber-400" />
+        </div>
+        <p className="text-white/70 text-sm text-center">{title}</p>
+        <p className="text-white/50 text-xs text-center">Impossible de charger cette image.<br />Le fichier original n'est plus accessible.</p>
+        <a
+          href={src}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white text-sm transition-colors"
+        >
+          <ExternalLink className="h-4 w-4" /> Ouvrir l'URL directe
+        </a>
+      </div>
+    )
+  }
+
+  return (
+    <div className="relative w-full h-full max-w-4xl mx-auto flex items-center justify-center">
+      <NextImage
+        src={src}
+        alt={title}
+        fill
+        className="object-contain"
+        sizes="(max-width: 640px) 100vw, 80vw"
+        unoptimized
+        priority
+        onError={() => setFailed(true)}
+      />
+    </div>
+  )
 }

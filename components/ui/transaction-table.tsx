@@ -142,20 +142,25 @@ export function TransactionTable({
     const notes: Note[] = await db.getNotesByTransaction(tx.id)
     const items: MediaItem[] = []
 
-    const isLegacySupabaseUrl = (url: string | null | undefined): boolean =>
-      typeof url === 'string' && url.includes('supabase.co/storage')
+    // Résolution d'URL : deux formats coexistent dans la base
+    // - Nouvelles notes  : content = "/api/media?key=image/uuid.jpg",  file_path = nom fichier
+    // - Notes migrées    : content = URL Supabase (morte),             file_path = clé B2 (ex: "image/uuid.jpg")
+    const resolveMediaUrl = (n: Note): string => {
+      // Format nouveau : content est déjà une URL B2 via le proxy interne
+      if (n.content && n.content.startsWith('/api/media')) return n.content
+      // Format migré : file_path contient la clé B2 (contient "/" mais pas "http")
+      if (n.file_path && n.file_path.includes('/') && !n.file_path.startsWith('http')) {
+        return `/api/media?key=${encodeURIComponent(n.file_path)}`
+      }
+      // Fallback : retourner content tel quel (peut être null/vide)
+      return n.content ?? ''
+    }
 
     for (const n of notes) {
-      if (n.content_type === "image") {
-        if (isLegacySupabaseUrl(n.content)) items.push({ type: "text", content: "(Image non disponible — ancienne version)", title: n.file_path || "Image" })
-        else items.push({ type: "image", content: n.content, title: n.file_path || "Image" })
-      } else if (n.content_type === "video") {
-        if (isLegacySupabaseUrl(n.content)) items.push({ type: "text", content: "(Vidéo non disponible — ancienne version)", title: n.file_path || "Vidéo" })
-        else items.push({ type: "video", content: n.content, title: n.file_path || "Vidéo" })
-      } else if (n.content_type === "audio") {
-        if (isLegacySupabaseUrl(n.content)) items.push({ type: "text", content: "(Audio non disponible — ancienne version)", title: n.file_path || "Audio" })
-        else items.push({ type: "audio", content: n.content, title: n.file_path || "Audio" })
-      } else if (n.content_type === "text" && n.file_path) items.push({ type: "document", content: n.content, title: n.file_path })
+      if (n.content_type === "image") items.push({ type: "image", content: resolveMediaUrl(n), title: n.file_path?.split('/').pop() || "Image" })
+      else if (n.content_type === "video") items.push({ type: "video", content: resolveMediaUrl(n), title: n.file_path?.split('/').pop() || "Vidéo" })
+      else if (n.content_type === "audio") items.push({ type: "audio", content: resolveMediaUrl(n), title: n.file_path?.split('/').pop() || "Audio" })
+      else if (n.content_type === "text" && n.file_path) items.push({ type: "document", content: resolveMediaUrl(n), title: n.file_path })
       else if (n.content_type === "text" && !n.file_path && n.content?.trim()) items.push({ type: "text", content: n.content, title: "Note" })
     }
     if (tx.description && !/^data:/.test(String(tx.description)) && String(tx.description).trim()) {
