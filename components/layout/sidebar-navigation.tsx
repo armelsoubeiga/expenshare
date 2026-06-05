@@ -123,18 +123,7 @@ export function SidebarNavigation({ activeTab, onTabChange, onLogout, isSubPage,
   }, [showNotif])
 
   const openNotif = () => {
-    setShowNotif(v => {
-      if (!v) {
-        const stored = localStorage.getItem("expenshare_user")
-        if (stored) {
-          const ud = JSON.parse(stored)
-          localStorage.setItem(`expenshare_notif_unread_${ud.id}`, "0")
-          localStorage.setItem(`expenshare_notif_lastSeen_${ud.id}`, new Date().toISOString())
-        }
-        setUnreadCount(0)
-      }
-      return !v
-    })
+    setShowNotif(v => !v)
   }
 
   const markAllRead = () => {

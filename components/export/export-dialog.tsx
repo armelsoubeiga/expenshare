@@ -194,6 +194,7 @@ export function ExportDialog({ isOpen, onClose, mode = 'modal' }: ExportDialogPr
   const [busy, setBusy] = useState(false)
   const [displayCurrency, setDisplayCurrency] = useState<CurrencyCode>("EUR")
   const [projectCurrency, setProjectCurrency] = useState<CurrencyCode>("EUR")
+  const [initializing, setInitializing] = useState(true)
 
   useEffect(() => {
     if (mode !== "page" && !isOpen) return
@@ -251,12 +252,16 @@ export function ExportDialog({ isOpen, onClose, mode = 'modal' }: ExportDialogPr
           const firstProject = loadedProjects[0]
           setSelectedProjectId(String(firstProject.id))
           setProjectCurrency(firstProject.currency)
+          setExportPdf(true)
         } else {
           setSelectedProjectId("all")
           setProjectCurrency(detectedCurrency)
+          setExportPdf(false)
         }
       } catch {
         // silently ignore initialization errors
+      } finally {
+        setInitializing(false)
       }
     })()
   }, [db, isOpen, isReady])
@@ -837,7 +842,25 @@ export function ExportDialog({ isOpen, onClose, mode = 'modal' }: ExportDialogPr
           <h2 className="text-2xl font-bold">Exporter les données</h2>
           <p className="text-sm text-muted-foreground mt-1">Choisissez le projet et le format d’export.</p>
         </div>
-        {formContent}
+        {initializing ? (
+          <div className="space-y-6 animate-pulse">
+            <div className="space-y-2">
+              <div className="h-4 w-16 bg-muted rounded" />
+              <div className="h-10 w-full bg-muted rounded-lg" />
+            </div>
+            <div className="space-y-2">
+              <div className="h-4 w-28 bg-muted rounded" />
+              <div className="flex gap-4">
+                <div className="h-5 w-16 bg-muted rounded" />
+                <div className="h-5 w-12 bg-muted rounded" />
+              </div>
+            </div>
+            <div className="flex justify-end gap-3 pt-2">
+              <div className="h-10 w-20 bg-muted rounded-lg" />
+              <div className="h-10 w-24 bg-muted rounded-lg" />
+            </div>
+          </div>
+        ) : formContent}
       </div>
     )
   }

@@ -195,22 +195,7 @@ export function TopHeader({ onLogout }: TopHeaderProps) {
           <div className="relative" ref={notifRef}>
             <button
               className="relative w-10 h-10 flex items-center justify-center rounded-xl hover:bg-muted transition-colors"
-              onClick={() => {
-                setShowNotifMenu(v => {
-                  const opening = !v
-                  if (opening) {
-                    // Marquer comme vu dès l'ouverture pour éviter la réapparition à la reconnexion
-                    const storedUser = localStorage.getItem('expenshare_user')
-                    if (storedUser) {
-                      const ud = JSON.parse(storedUser)
-                      localStorage.setItem(`expenshare_notif_unread_${ud.id}`, '0')
-                      localStorage.setItem(`expenshare_notif_lastSeen_${ud.id}`, new Date().toISOString())
-                    }
-                    setUnreadCount(0)
-                  }
-                  return opening
-                })
-              }}
+              onClick={() => setShowNotifMenu(v => !v)}
               aria-label="Notifications"
             >
               <Bell className="h-5 w-5 text-muted-foreground" />
