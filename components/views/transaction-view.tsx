@@ -28,6 +28,7 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
   const [description, setDescription] = useState("")
   const [showNote, setShowNote] = useState(false)
   const [mediaFiles, setMediaFiles] = useState<MediaFile[]>([])
+  const [uploading, setUploading] = useState(false)
   const [error, setError] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [success, setSuccess] = useState(false)
@@ -35,6 +36,9 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
   const [recordingSeconds, setRecordingSeconds] = useState(0)
   const audioRef = useRef<MediaUploadHandle | null>(null)
   const amountRef = useRef<HTMLInputElement>(null)
+  const imgInputRef = useRef<HTMLInputElement>(null)
+  const vidInputRef = useRef<HTMLInputElement>(null)
+  const docInputRef = useRef<HTMLInputElement>(null)
 
   const [eurToCfa, setEurToCfa] = useState(655.957)
   const [eurToUsd, setEurToUsd] = useState(1.0)
@@ -49,6 +53,53 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
 
   const currencyLabel = (c: string) => c === 'CFA' ? 'F CFA' : c === 'USD' ? 'USD $' : 'EUR €'
   const currencySymbol = entryCurrency === "CFA" ? "F CFA" : entryCurrency === "USD" ? "$" : "€"
+
+  const uploadToB2 = async (base64: string, contentType: string, extension: string): Promise<string> => {
+    const resp = await fetch("/api/upload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: base64, content_type: contentType, extension }),
+    })
+    if (!resp.ok) throw new Error(await resp.text())
+    const { key } = await resp.json() as { key: string }
+    return `/api/media?key=${encodeURIComponent(key)}`
+  }
+
+  const fileToBase64 = (file: File | Blob): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(reader.result as string)
+      reader.onerror = reject
+      reader.readAsDataURL(file)
+    })
+
+  const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || [])
+    if (!files.length) return
+    e.target.value = ""
+    setUploading(true)
+    for (const file of files) {
+      try {
+        const base64 = await fileToBase64(file)
+        const ext = file.name.split(".").pop() || "bin"
+        const mediaType: MediaFile["type"] = file.type.startsWith("image/") ? "image"
+          : file.type.startsWith("audio/") ? "audio"
+          : file.type.startsWith("video/") ? "video"
+          : "file"
+        const url = await uploadToB2(base64, mediaType, ext)
+        setMediaFiles(prev => [...prev, {
+          id: `${Date.now()}${Math.random().toString(36).slice(2, 9)}`,
+          type: mediaType,
+          name: file.name,
+          size: file.size,
+          url,
+        }])
+      } catch (err) {
+        setError("Erreur upload : " + (err instanceof Error ? err.message : String(err)))
+      }
+    }
+    setUploading(false)
+  }, [])
 
   const loadProjects = useCallback(async () => {
     if (!db) return
@@ -138,12 +189,11 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
   const handleAddCategory = useCallback(async (name: string, parentId: number | null): Promise<number> => {
     if (!db || !projectId) throw new Error("Projet non sélectionné")
     const parent = parentId ? categories.find(c => c.id === parentId) : null
-    const level = parent ? 2 : 1
     return db.categories.add({
       project_id: Number(projectId),
       name,
       parent_id: parentId ?? undefined,
-      level,
+      level: parent ? 2 : 1,
     })
   }, [db, projectId, categories])
 
@@ -406,31 +456,16 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
 
           <div className="grid grid-cols-5 gap-1.5">
             {[
-              { icon: Camera, label: "Photo", id: "tv-img", color: "text-blue-500", bg: "bg-blue-50 dark:bg-blue-950/20" },
-              {
-                icon: Mic,
-                label: isRecordingAudio ? recFmt : "Audio",
-                id: "tv-aud",
-                color: isRecordingAudio ? "text-red-500" : "text-green-500",
-                bg: isRecordingAudio ? "bg-red-50 dark:bg-red-950/20 animate-pulse" : "bg-green-50 dark:bg-green-950/20",
-              },
-              { icon: Video, label: "Vidéo", id: "tv-vid", color: "text-purple-500", bg: "bg-purple-50 dark:bg-purple-950/20" },
-              { icon: Paperclip, label: "Doc", id: "tv-file", color: "text-orange-500", bg: "bg-orange-50 dark:bg-orange-950/20" },
-              { icon: FileText, label: "Note", id: "tv-note", color: "text-amber-500", bg: "bg-amber-50 dark:bg-amber-950/20" },
-            ].map(({ icon: Icon, label, id, color, bg }) => (
+              { icon: Camera,    label: "Photo",  color: "text-blue-500",   bg: "bg-blue-50 dark:bg-blue-950/20",    action: () => imgInputRef.current?.click() },
+              { icon: Mic,       label: isRecordingAudio ? recFmt : "Audio", color: isRecordingAudio ? "text-red-500" : "text-green-500", bg: isRecordingAudio ? "bg-red-50 dark:bg-red-950/20 animate-pulse" : "bg-green-50 dark:bg-green-950/20", action: () => { if (audioRef.current) { audioRef.current.getRecordingState() ? audioRef.current.stopAudioRecording() : audioRef.current.startAudioRecording() } } },
+              { icon: Video,     label: "Vidéo",  color: "text-purple-500", bg: "bg-purple-50 dark:bg-purple-950/20", action: () => vidInputRef.current?.click() },
+              { icon: Paperclip, label: "Doc",    color: "text-orange-500", bg: "bg-orange-50 dark:bg-orange-950/20", action: () => docInputRef.current?.click() },
+              { icon: FileText,  label: "Note",   color: "text-amber-500",  bg: "bg-amber-50 dark:bg-amber-950/20",  action: () => setShowNote(v => !v) },
+            ].map(({ icon: Icon, label, color, bg, action }) => (
               <button
-                key={id}
+                key={label}
                 type="button"
-                onClick={() => {
-                  if (id === "tv-note") { setShowNote(v => !v); return }
-                  if (id === "tv-aud" && audioRef.current) {
-                    audioRef.current.getRecordingState()
-                      ? audioRef.current.stopAudioRecording()
-                      : audioRef.current.startAudioRecording()
-                    return
-                  }
-                  document.getElementById(id)?.click()
-                }}
+                onClick={action}
                 className={`flex flex-col items-center gap-1 py-2.5 rounded-xl ${bg} hover:opacity-80 transition-all`}
               >
                 <Icon className={`h-4 w-4 ${color}`} />
@@ -438,6 +473,13 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
               </button>
             ))}
           </div>
+
+          {uploading && (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Envoi en cours…
+            </div>
+          )}
 
           {showNote && (
             <div className="relative">
@@ -469,11 +511,22 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
             />
           )}
 
+          <input ref={imgInputRef} type="file" multiple accept="image/*" className="hidden" onChange={handleFileChange} />
+          <input ref={vidInputRef} type="file" accept="video/*" className="hidden" onChange={handleFileChange} />
+          <input ref={docInputRef} type="file" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,application/pdf,application/msword,text/plain,text/csv" className="hidden" onChange={handleFileChange} />
+
           <div className="hidden">
-            <MediaUpload id="tv-img" onMediaAdd={m => setMediaFiles(p => [...p, m])} onMediaRemove={id => setMediaFiles(p => p.filter(m => m.id !== id))} mediaFiles={mediaFiles} maxFiles={10} acceptedTypes={["image/*"]} />
-            <MediaUpload id="tv-aud" ref={audioRef} onMediaAdd={m => setMediaFiles(p => [...p, m])} onMediaRemove={id => setMediaFiles(p => p.filter(m => m.id !== id))} mediaFiles={mediaFiles} maxFiles={5} acceptedTypes={["audio/*"]} onRecordingStart={() => { setIsRecordingAudio(true); setRecordingSeconds(0) }} onRecordingStop={() => setIsRecordingAudio(false)} onRecordingTimeTick={s => setRecordingSeconds(s)} />
-            <MediaUpload id="tv-vid" onMediaAdd={m => setMediaFiles(p => [...p, m])} onMediaRemove={id => setMediaFiles(p => p.filter(m => m.id !== id))} mediaFiles={mediaFiles} maxFiles={5} acceptedTypes={["video/*"]} />
-            <MediaUpload id="tv-file" onMediaAdd={m => setMediaFiles(p => [...p, m])} onMediaRemove={id => setMediaFiles(p => p.filter(m => m.id !== id))} mediaFiles={mediaFiles} maxFiles={10} acceptedTypes={["application/pdf", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-powerpoint", "application/vnd.openxmlformats-officedocument.presentationml.presentation", "text/plain", "text/csv", ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv"]} />
+            <MediaUpload
+              ref={audioRef}
+              onMediaAdd={m => setMediaFiles(p => [...p, m])}
+              onMediaRemove={id => setMediaFiles(p => p.filter(m => m.id !== id))}
+              mediaFiles={mediaFiles}
+              maxFiles={5}
+              acceptedTypes={["audio/*"]}
+              onRecordingStart={() => { setIsRecordingAudio(true); setRecordingSeconds(0) }}
+              onRecordingStop={() => setIsRecordingAudio(false)}
+              onRecordingTimeTick={s => setRecordingSeconds(s)}
+            />
           </div>
         </div>
 
@@ -494,7 +547,7 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
           </button>
           <button
             type="submit"
-            disabled={isLoading}
+            disabled={isLoading || uploading}
             className={`flex-1 h-10 rounded-xl text-white font-semibold text-sm transition-all flex items-center justify-center gap-2 ${
               type === "expense"
                 ? "bg-red-500 hover:bg-red-600 disabled:bg-red-300"
