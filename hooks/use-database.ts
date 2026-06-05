@@ -51,7 +51,7 @@ export function useDatabase(): UseDatabaseResult {
   }
 }
 
-export function useGlobalStats(displayCurrency?: CurrencyCode) {
+export function useGlobalStats(displayCurrency?: CurrencyCode, projectIds?: number[]) {
   const [stats, setStats] = useState({
     totalExpenses: 0,
     totalBudgets: 0,
@@ -66,14 +66,20 @@ export function useGlobalStats(displayCurrency?: CurrencyCode) {
   })
   const [isLoading, setIsLoading] = useState(true)
   const { isReady, db } = useDatabase()
+  // stable key to detect projectIds changes without infinite re-renders
+  const projectIdsKey = projectIds?.join(',') ?? ''
+
   const loadStats = useCallback(async () => {
-    if (!isReady || !db) {
-      return
-    }
+    if (!isReady || !db) return
 
     setIsLoading(true)
     try {
-      const globalStats = await db.getGlobalStats()
+      const dbAny = db as unknown as {
+        getStatsForProjectIds?: (ids: number[]) => Promise<typeof stats & { totalExpenses_eur?: number; totalBudgets_eur?: number; totalExpenses_cfa?: number; totalBudgets_cfa?: number; totalExpenses_usd?: number; totalBudgets_usd?: number }>
+      }
+      const globalStats = projectIds?.length && typeof dbAny.getStatsForProjectIds === 'function'
+        ? await dbAny.getStatsForProjectIds(projectIds)
+        : await db.getGlobalStats()
 
       if (displayCurrency) {
         const totals = displayCurrency === 'CFA'
@@ -96,7 +102,8 @@ export function useGlobalStats(displayCurrency?: CurrencyCode) {
     } finally {
       setIsLoading(false)
     }
-  }, [db, displayCurrency, isReady])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [db, displayCurrency, isReady, projectIdsKey])
 
   useEffect(() => {
     void loadStats()
@@ -105,25 +112,34 @@ export function useGlobalStats(displayCurrency?: CurrencyCode) {
   return { stats, isLoading, refetch: loadStats }
 }
 
-export function useRecentTransactions(limit = 10) {
+export function useRecentTransactions(limit = 10, projectIds?: number[]) {
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const { isReady, db } = useDatabase()
+  const projectIdsKey = projectIds?.join(',') ?? ''
+
   const loadTransactions = useCallback(async () => {
-    if (!isReady || !db) {
-      return
-    }
+    if (!isReady || !db) return
 
     setIsLoading(true)
     try {
-      const recentTransactions = await db.getRecentTransactions(limit)
+      let recentTransactions: Transaction[]
+      if (projectIds?.length) {
+        const dbAny = db as unknown as { getRecentTransactionsForProjects?: (ids: number[], limit: number) => Promise<Transaction[]> }
+        recentTransactions = typeof dbAny.getRecentTransactionsForProjects === 'function'
+          ? await dbAny.getRecentTransactionsForProjects(projectIds, limit)
+          : (await db.getRecentTransactions(limit)).filter((t: Transaction) => projectIds.includes(Number(t.project_id)))
+      } else {
+        recentTransactions = await db.getRecentTransactions(limit)
+      }
       setTransactions(recentTransactions)
     } catch (error) {
       console.error("[useRecentTransactions] Failed to load recent transactions:", error)
     } finally {
       setIsLoading(false)
     }
-  }, [db, isReady, limit])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [db, isReady, limit, projectIdsKey])
 
   useEffect(() => {
     void loadTransactions()

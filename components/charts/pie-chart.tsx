@@ -43,7 +43,7 @@ export function CustomPieChart({ data, title, centerLabel, centerValue, size = 2
         <div className="bg-background border border-border rounded-lg p-3 shadow-lg max-w-[200px]">
           <p className="font-medium text-sm leading-tight">{label}</p>
           <p className="text-sm text-muted-foreground">
-            {new Intl.NumberFormat("fr-FR", { style: "currency", currency }).format(datum.value)}
+            {new Intl.NumberFormat("fr-FR", { style: "currency", currency, currencyDisplay: 'narrowSymbol', minimumFractionDigits: 0, maximumFractionDigits: currency === 'XOF' ? 0 : 2 }).format(datum.value)}
           </p>
           <p className="text-xs text-muted-foreground">
             {((datum.value / datum.payload.total) * 100).toFixed(1)}% du total

@@ -135,7 +135,8 @@ export function TransactionView({ preselectedProjectId, onSuccess, onCancel }: T
     return new Intl.NumberFormat('fr-FR', {
       style: 'currency',
       currency: cur,
-      minimumFractionDigits: cur === 'XOF' ? 0 : 0,
+      currencyDisplay: 'narrowSymbol',
+      minimumFractionDigits: 0,
       maximumFractionDigits: cur === 'XOF' ? 0 : 2,
     }).format(amt)
   }, [projectCurrencyCode])

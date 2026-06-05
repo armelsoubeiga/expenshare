@@ -5,7 +5,6 @@ import { usePathname } from "next/navigation"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Settings, LogOut, KeyRound, Download, Users, Bell, ChevronDown } from "lucide-react"
 import { db } from "@/lib/database"
-import { UserManagement } from "@/components/settings/user-management"
 import { useNavigation } from "@/lib/navigation-context"
 import type { Transaction, ProjectUser } from "@/lib/types"
 
@@ -34,7 +33,6 @@ export function TopHeader({ onLogout }: TopHeaderProps) {
   useEffect(() => { setIsMenuOpen(false) }, [pathname])
 
   const [userName, setUserName] = useState<string>("")
-  const [showUserMgmt, setShowUserMgmt] = useState(false)
   const [isAdmin, setIsAdmin] = useState(false)
   const [unreadCount, setUnreadCount] = useState(0)
   const [notifItems, setNotifItems] = useState<NotifItem[]>([])
@@ -277,7 +275,7 @@ export function TopHeader({ onLogout }: TopHeaderProps) {
                   {[
                     { icon: KeyRound, label: "Changer le PIN", action: () => { setIsMenuOpen(false); navigate({ type: 'change-pin' }) } },
                     { icon: Settings, label: "Paramètres", action: () => { setIsMenuOpen(false); navigate({ type: 'settings' }) } },
-                    ...(isAdmin ? [{ icon: Users, label: "Gérer les utilisateurs", action: () => { setIsMenuOpen(false); setShowUserMgmt(true) } }] : []),
+                    ...(isAdmin ? [{ icon: Users, label: "Gérer les utilisateurs", action: () => { setIsMenuOpen(false); navigate({ type: 'user-management' }) } }] : []),
                   ].map(({ icon: Icon, label, action }) => (
                     <button key={label} onClick={action} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm hover:bg-muted transition-colors text-left">
                       <Icon className="h-4 w-4 text-muted-foreground" />
@@ -301,7 +299,6 @@ export function TopHeader({ onLogout }: TopHeaderProps) {
         </div>
       </header>
 
-      <UserManagement isOpen={showUserMgmt} onClose={() => setShowUserMgmt(false)} />
     </>
   )
 }

@@ -168,6 +168,7 @@ export function StatsPage() {
     return new Intl.NumberFormat("fr-FR", {
       style: "currency",
       currency: currencyForIntl,
+      currencyDisplay: 'narrowSymbol',
       minimumFractionDigits: isWhole ? 0 : 2,
       maximumFractionDigits: currencyForIntl === 'XOF' ? 0 : 2,
     }).format(amount)

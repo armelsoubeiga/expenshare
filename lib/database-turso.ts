@@ -220,6 +220,35 @@ class TursoDatabase {
     },
   }
 
+  async getUserActivityStats(): Promise<{ userId: string; txCount: number; budgetCount: number; totalAmountEur: number; lastDate: string | null; projectCount: number }[]> {
+    try {
+      const r = await turso.execute({
+        sql: `SELECT user_id,
+                SUM(CASE WHEN type = 'expense' THEN 1 ELSE 0 END) AS tx_count,
+                SUM(CASE WHEN type = 'budget'  THEN 1 ELSE 0 END) AS bud_count,
+                SUM(COALESCE(amount_eur, 0))                        AS total_eur,
+                MAX(created_at)                                     AS last_date,
+                COUNT(DISTINCT project_id)                         AS proj_count
+              FROM transactions
+              GROUP BY user_id`,
+        args: [],
+      })
+      return r.rows.map(row => {
+        const o = rowToObj(row, r.columns)
+        return {
+          userId: String(o.user_id ?? ''),
+          txCount: Number(o.tx_count ?? 0),
+          budgetCount: Number(o.bud_count ?? 0),
+          totalAmountEur: Number(o.total_eur ?? 0),
+          lastDate: o.last_date ? String(o.last_date) : null,
+          projectCount: Number(o.proj_count ?? 0),
+        }
+      })
+    } catch {
+      return []
+    }
+  }
+
   async deleteUser(userId: string): Promise<boolean> {
     try {
       await turso.execute({ sql: 'DELETE FROM users WHERE id = ?', args: [userId] })
@@ -1034,6 +1063,67 @@ class TursoDatabase {
     } catch (e) {
       console.error('[ExpenseShare] getGlobalStats failed:', e)
       return empty
+    }
+  }
+
+  async getStatsForProjectIds(projectIds: number[]) {
+    const empty = { totalExpenses: 0, totalBudgets: 0, balance: 0, transactionCount: 0, lastTransactionDate: null as string | null, projectCount: 0, expensesByMonth: [] as { month: string; amount: number }[], budgetsByMonth: [] as { month: string; amount: number }[], totalExpenses_eur: 0, totalBudgets_eur: 0, totalExpenses_cfa: 0, totalBudgets_cfa: 0, totalExpenses_usd: 0, totalBudgets_usd: 0, eurToCfa: null as number | null, eurToUsd: null as number | null }
+    if (!projectIds.length) return empty
+    try {
+      const uid = this.getCurrentUserId()
+      const ph = projectIds.map(() => '?').join(',')
+      const [txRes, projCount, cfaSetting, usdSetting] = await Promise.all([
+        turso.execute({ sql: `SELECT * FROM transactions WHERE project_id IN (${ph})`, args: projectIds }),
+        turso.execute({ sql: `SELECT COUNT(*) as cnt FROM projects WHERE id IN (${ph})`, args: projectIds }),
+        uid ? this.settings.get(`user:${uid}:eur_to_cfa`).catch(() => null) : Promise.resolve(null),
+        uid ? this.settings.get(`user:${uid}:eur_to_usd`).catch(() => null) : Promise.resolve(null),
+      ])
+      const userEurToCfa = cfaSetting?.value && Number(cfaSetting.value) > 0 ? Number(cfaSetting.value) : null
+      const userEurToUsd = usdSetting?.value && Number(usdSetting.value) > 0 ? Number(usdSetting.value) : null
+      const all = rowsToObjs(txRes)
+      const projCnt = Number(rowToObj(projCount.rows[0], projCount.columns).cnt ?? 0)
+      const expenses = all.filter((t) => t.type === 'expense')
+      const budgets = all.filter((t) => t.type === 'budget')
+      const getEur = (t: any) => Number(t.amount_eur ?? t.amount ?? 0)
+      const getCfa = (t: any) => Number(t.amount_cfa ?? 0)
+      const getUsd = (t: any) => Number(t.amount_usd ?? 0)
+      const totalExpenses = expenses.reduce((s, t) => s + getEur(t), 0)
+      const totalBudgets = budgets.reduce((s, t) => s + getEur(t), 0)
+      const groupByMonth = (arr: any[]) => {
+        const months: Record<string, number> = {}
+        arr.forEach((t) => {
+          const d = new Date(t.created_at)
+          const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+          months[k] = (months[k] || 0) + getEur(t)
+        })
+        return Object.entries(months).map(([month, amount]) => ({ month, amount }))
+      }
+      const lastTransactionDate = all.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0]?.created_at || null
+      const totalExpenses_cfa = userEurToCfa ? Math.round(totalExpenses * userEurToCfa) : expenses.reduce((s, t) => s + getCfa(t), 0)
+      const totalBudgets_cfa = userEurToCfa ? Math.round(totalBudgets * userEurToCfa) : budgets.reduce((s, t) => s + getCfa(t), 0)
+      const totalExpenses_usd = userEurToUsd ? Math.round(totalExpenses * userEurToUsd * 100) / 100 : expenses.reduce((s, t) => s + getUsd(t), 0)
+      const totalBudgets_usd = userEurToUsd ? Math.round(totalBudgets * userEurToUsd * 100) / 100 : budgets.reduce((s, t) => s + getUsd(t), 0)
+      return { totalExpenses, totalBudgets, balance: totalBudgets - totalExpenses, transactionCount: all.length, lastTransactionDate, projectCount: projCnt, expensesByMonth: groupByMonth(expenses), budgetsByMonth: groupByMonth(budgets), totalExpenses_eur: totalExpenses, totalBudgets_eur: totalBudgets, totalExpenses_cfa, totalBudgets_cfa, totalExpenses_usd, totalBudgets_usd, eurToCfa: userEurToCfa, eurToUsd: userEurToUsd }
+    } catch (e) {
+      console.error('[ExpenseShare] getStatsForProjectIds failed:', e)
+      return empty
+    }
+  }
+
+  async getRecentTransactionsForProjects(projectIds: number[], limit = 10): Promise<any[]> {
+    if (!projectIds.length) return []
+    try {
+      const ph = projectIds.map(() => '?').join(',')
+      const txRes = await turso.execute({ sql: `SELECT * FROM transactions WHERE project_id IN (${ph}) ORDER BY created_at DESC LIMIT ?`, args: [...projectIds, limit] })
+      const tx = rowsToObjs(txRes)
+      if (!tx.length) return []
+      const ids = tx.map((t: any) => t.id).filter(Boolean)
+      const notesRes = await turso.execute({ sql: `SELECT * FROM notes WHERE transaction_id IN (${ids.map(() => '?').join(',')})`, args: ids })
+      const notes = rowsToObjs(notesRes)
+      return this.buildTransactionRows(tx, notes)
+    } catch (e) {
+      console.error('[ExpenseShare] getRecentTransactionsForProjects failed:', e)
+      return []
     }
   }
 

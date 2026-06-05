@@ -189,7 +189,7 @@ export function ExportDialog({ isOpen, onClose, mode = 'modal' }: ExportDialogPr
   const { db, isReady } = useDatabase()
   const [projects, setProjects] = useState<ExportProject[]>([])
   const [selectedProjectId, setSelectedProjectId] = useState<string>("all")
-  const [exportCsv, setExportCsv] = useState(true)
+  const [exportCsv, setExportCsv] = useState(false)
   const [exportPdf, setExportPdf] = useState(true)
   const [busy, setBusy] = useState(false)
   const [displayCurrency, setDisplayCurrency] = useState<CurrencyCode>("EUR")
@@ -269,6 +269,7 @@ export function ExportDialog({ isOpen, onClose, mode = 'modal' }: ExportDialogPr
       return
     }
 
+    setExportPdf(true)
     const project = projects.find((item) => String(item.id) === selectedProjectId)
     if (project) {
       setProjectCurrency(project.currency)
@@ -381,6 +382,9 @@ export function ExportDialog({ isOpen, onClose, mode = 'modal' }: ExportDialogPr
     project?: ExportProjectDetails
     members?: string[]
     transfers?: { outgoing: any[]; incoming: any[] }
+    totalIn?: number
+    totalOut?: number
+    effectiveExpenses?: number
     effectiveBudget?: number
   }) => {
     const doc = new jsPDF({ unit: "pt", format: "a4" })
@@ -422,12 +426,17 @@ export function ExportDialog({ isOpen, onClose, mode = 'modal' }: ExportDialogPr
       },
       { exp: 0, bud: 0 },
     )
-    const balance = totals.bud - totals.exp
+
+    // Totaux effectifs : inclure les transferts inter-projets
+    const hasTransferAdj = options?.totalIn != null || options?.totalOut != null
+    const displayExp = options?.effectiveExpenses != null ? options.effectiveExpenses : totals.exp
+    const displayBud = options?.effectiveBudget != null ? options.effectiveBudget : totals.bud
+    const displayBalance = displayBud - displayExp
 
     const pageWidth = doc.internal.pageSize.getWidth()
     const gap = 12
     const cardsY = 115
-    const cardHeight = 68
+    const cardHeight = hasTransferAdj ? 80 : 68
     const cardWidth = (pageWidth - margin * 2 - gap * 2) / 3
     const roundedRect = (x: number, y: number, width: number, height: number, radius: number, color: [number, number, number]) => {
       doc.setFillColor(color[0], color[1], color[2])
@@ -441,7 +450,7 @@ export function ExportDialog({ isOpen, onClose, mode = 'modal' }: ExportDialogPr
 
     roundedRect(margin, cardsY, cardWidth, cardHeight, 8, redBg)
     roundedRect(margin + cardWidth + gap, cardsY, cardWidth, cardHeight, 8, blueBg)
-    const balanceBg = balance >= 0 ? greenBg : dangerBg
+    const balanceBg = displayBalance >= 0 ? greenBg : dangerBg
     roundedRect(margin + (cardWidth + gap) * 2, cardsY, cardWidth, cardHeight, 8, balanceBg)
 
     const cardPadding = 12
@@ -451,21 +460,35 @@ export function ExportDialog({ isOpen, onClose, mode = 'modal' }: ExportDialogPr
     doc.text("Total Dépenses", margin + cardPadding, cardsY + cardPadding + 2)
     doc.setFontSize(16)
     doc.setTextColor(239, 68, 68)
-    doc.text(`${formatAmountPdf(totals.exp, projectCurrency)} ${currencySymbol}`, margin + cardPadding, cardsY + cardPadding + 26)
+    doc.text(`${formatAmountPdf(displayExp, projectCurrency)} ${currencySymbol}`, margin + cardPadding, cardsY + cardPadding + 26)
+    if (hasTransferAdj && options?.totalOut) {
+      doc.setFont("helvetica", "normal")
+      doc.setFontSize(8)
+      doc.setTextColor(200, 80, 30)
+      doc.text(`(dont ${formatAmountPdf(options.totalOut, projectCurrency)} ${currencySymbol} envoyé)`, margin + cardPadding, cardsY + cardPadding + 42)
+    }
 
+    doc.setFont("helvetica", "bold")
     doc.setTextColor(100, 100, 100)
     doc.setFontSize(10)
     doc.text("Total Budgets", margin + cardWidth + gap + cardPadding, cardsY + cardPadding + 2)
     doc.setFontSize(16)
     doc.setTextColor(59, 130, 246)
-    doc.text(`${formatAmountPdf(totals.bud, projectCurrency)} ${currencySymbol}`, margin + cardWidth + gap + cardPadding, cardsY + cardPadding + 26)
+    doc.text(`${formatAmountPdf(displayBud, projectCurrency)} ${currencySymbol}`, margin + cardWidth + gap + cardPadding, cardsY + cardPadding + 26)
+    if (hasTransferAdj && options?.totalIn) {
+      doc.setFont("helvetica", "normal")
+      doc.setFontSize(8)
+      doc.setTextColor(22, 130, 80)
+      doc.text(`(dont ${formatAmountPdf(options.totalIn, projectCurrency)} ${currencySymbol} reçu)`, margin + cardWidth + gap + cardPadding, cardsY + cardPadding + 42)
+    }
 
+    doc.setFont("helvetica", "bold")
     doc.setTextColor(100, 100, 100)
     doc.setFontSize(10)
     doc.text("Solde", margin + (cardWidth + gap) * 2 + cardPadding, cardsY + cardPadding + 2)
     doc.setFontSize(16)
-    doc.setTextColor(balance >= 0 ? 16 : 239, balance >= 0 ? 185 : 68, balance >= 0 ? 129 : 68)
-    doc.text(`${formatAmountPdf(balance, projectCurrency)} ${currencySymbol}`, margin + (cardWidth + gap) * 2 + cardPadding, cardsY + cardPadding + 26)
+    doc.setTextColor(displayBalance >= 0 ? 16 : 239, displayBalance >= 0 ? 185 : 68, displayBalance >= 0 ? 129 : 68)
+    doc.text(`${formatAmountPdf(displayBalance, projectCurrency)} ${currencySymbol}`, margin + (cardWidth + gap) * 2 + cardPadding, cardsY + cardPadding + 26)
 
     const expensesByCategory = new Map<string, number>()
     transactions.forEach((transaction) => {
@@ -564,42 +587,105 @@ export function ExportDialog({ isOpen, onClose, mode = 'modal' }: ExportDialogPr
     const hasTransfers = transfers && (transfers.outgoing.length > 0 || transfers.incoming.length > 0)
     if (hasTransfers) {
       let tY = (doc as any).lastAutoTable?.finalY ?? chartY + 20
-      if (tY + 80 > pageHeight - margin) { doc.addPage(); tY = margin }
-      tY += 20
+      if (tY + 100 > pageHeight - margin) { doc.addPage(); tY = margin }
+      tY += 24
+
       doc.setFontSize(12)
       doc.setFont("helvetica", "bold")
       doc.setTextColor(20, 20, 20)
-      doc.text("Partage de budget inter-projets", margin, tY)
-      tY += 8
+      doc.text("Transferts de budget inter-projets", margin, tY)
+      tY += 4
 
-      const transferRows: string[][] = []
+      // Construire les lignes : d'abord les reçus (vert), puis les envoyés (orange/rouge)
+      type TransferRow = { cells: string[]; isIncoming: boolean }
+      const transferRows: TransferRow[] = []
+
       for (const t of transfers.incoming) {
         const amt = effectiveCurrency === 'CFA' ? t.amount_cfa : effectiveCurrency === 'USD' ? t.amount_usd : t.amount_eur
-        transferRows.push([`← Reçu de`, sanitizeText(t.source_name || `Projet #${t.source_project_id}`), `+${formatAmountPdf(Number(amt), projectCurrency)} ${currencySymbol}`, sanitizeText(t.note || ''), t.created_at ? formatDate(t.created_at) : ''])
+        transferRows.push({
+          cells: [
+            'Recu',
+            sanitizeText(t.source_name || `Projet #${t.source_project_id}`),
+            `+${formatAmountPdf(Number(amt), projectCurrency)} ${currencySymbol}`,
+            t.created_at ? formatDate(t.created_at) : '',
+            sanitizeText(t.note || '-'),
+          ],
+          isIncoming: true,
+        })
       }
       for (const t of transfers.outgoing) {
         const amt = effectiveCurrency === 'CFA' ? t.amount_cfa : effectiveCurrency === 'USD' ? t.amount_usd : t.amount_eur
-        transferRows.push([`→ Prêté à`, sanitizeText(t.target_name || `Projet #${t.target_project_id}`), `−${formatAmountPdf(Number(amt), projectCurrency)} ${currencySymbol}`, sanitizeText(t.note || ''), t.created_at ? formatDate(t.created_at) : ''])
+        transferRows.push({
+          cells: [
+            'Envoye',
+            sanitizeText(t.target_name || `Projet #${t.target_project_id}`),
+            `-${formatAmountPdf(Number(amt), projectCurrency)} ${currencySymbol}`,
+            t.created_at ? formatDate(t.created_at) : '',
+            sanitizeText(t.note || '-'),
+          ],
+          isIncoming: false,
+        })
       }
-      if (options?.effectiveBudget != null) {
-        transferRows.push(['', 'BUDGET EFFECTIF', `${formatAmountPdf(options.effectiveBudget, projectCurrency)} ${currencySymbol}`, '', ''])
-      }
+
       autoTable(doc, {
-        startY: tY + 4,
-        head: [['Direction', 'Projet lié', 'Montant', 'Note', 'Date']],
-        body: transferRows,
+        startY: tY + 6,
+        head: [['Sens', 'Projet lie', 'Montant', 'Date', 'Note']],
+        body: transferRows.map(r => r.cells),
         styles: { fontSize: 9 },
-        headStyles: { fillColor: [80, 120, 200] },
+        headStyles: { fillColor: [60, 90, 180], textColor: [255, 255, 255], fontStyle: 'bold' },
+        columnStyles: {
+          0: { fontStyle: 'bold', cellWidth: 52 },
+          1: { cellWidth: 130 },
+          2: { halign: 'right', cellWidth: 110 },
+          3: { cellWidth: 68 },
+          4: { cellWidth: 'auto' },
+        },
         didParseCell: (data: any) => {
           if (data.section !== 'body') return
           const row = transferRows[data.row.index]
-          if (row?.[0]?.startsWith('←')) data.cell.styles.textColor = [22, 163, 74]
-          else if (row?.[0]?.startsWith('→')) data.cell.styles.textColor = [234, 88, 12]
-          else if (row?.[1] === 'BUDGET EFFECTIF') data.cell.styles.fontStyle = 'bold'
+          if (!row) return
+          if (row.isIncoming) {
+            data.cell.styles.textColor = [22, 130, 74]
+          } else {
+            data.cell.styles.textColor = [200, 60, 20]
+          }
         },
         theme: 'striped',
         margin: { left: margin, right: margin },
       })
+
+      // Récapitulatif après le tableau
+      let sumY = (doc as any).lastAutoTable?.finalY ?? tY + 80
+      sumY += 10
+      if (sumY + 50 > pageHeight - margin) { doc.addPage(); sumY = margin + 10 }
+
+      const totalInAmt = (transfers.incoming || []).reduce((s: number, t: any) => {
+        const amt = effectiveCurrency === 'CFA' ? t.amount_cfa : effectiveCurrency === 'USD' ? t.amount_usd : t.amount_eur
+        return s + Number(amt || 0)
+      }, 0)
+      const totalOutAmt = (transfers.outgoing || []).reduce((s: number, t: any) => {
+        const amt = effectiveCurrency === 'CFA' ? t.amount_cfa : effectiveCurrency === 'USD' ? t.amount_usd : t.amount_eur
+        return s + Number(amt || 0)
+      }, 0)
+
+      const summaryX = pageWidth - margin - 200
+      doc.setFillColor(245, 245, 252)
+      doc.roundedRect(summaryX, sumY, 200, 52, 6, 6, 'F')
+      doc.setFont("helvetica", "normal")
+      doc.setFontSize(9)
+      if (totalInAmt > 0) {
+        doc.setTextColor(22, 130, 74)
+        doc.text(`Budget recu :  +${formatAmountPdf(totalInAmt, projectCurrency)} ${currencySymbol}`, summaryX + 10, sumY + 14)
+      }
+      if (totalOutAmt > 0) {
+        doc.setTextColor(200, 60, 20)
+        doc.text(`Budget envoye :  -${formatAmountPdf(totalOutAmt, projectCurrency)} ${currencySymbol}`, summaryX + 10, sumY + 28)
+      }
+      if (options?.effectiveBudget != null) {
+        doc.setFont("helvetica", "bold")
+        doc.setTextColor(20, 20, 20)
+        doc.text(`Budget effectif :  ${formatAmountPdf(options.effectiveBudget, projectCurrency)} ${currencySymbol}`, summaryX + 10, sumY + 44)
+      }
     }
 
     const blob = doc.output("blob") as Blob
@@ -678,21 +764,22 @@ export function ExportDialog({ isOpen, onClose, mode = 'modal' }: ExportDialogPr
         // Récupérer les transferts inter-projets
         let transfersData: { outgoing: any[]; incoming: any[] } | undefined
         let effectiveBudget: number | undefined
+        let effectiveExpenses: number | undefined
+        let totalInVal: number | undefined
+        let totalOutVal: number | undefined
         try {
           const dbAny = db as any
           if (typeof dbAny.getProjectBudgetTransfers === 'function') {
             transfersData = await dbAny.getProjectBudgetTransfers(Number(selectedProjectId))
+            const getAmt = (t: any) => effectiveCurrency === 'CFA' ? Number(t.amount_cfa || 0) : effectiveCurrency === 'USD' ? Number(t.amount_usd || 0) : Number(t.amount_eur || 0)
+            totalInVal = (transfersData?.incoming || []).reduce((s: number, t: any) => s + getAmt(t), 0)
+            totalOutVal = (transfersData?.outgoing || []).reduce((s: number, t: any) => s + getAmt(t), 0)
             const budgetTx = transactions.filter(t => t.type === 'budget')
             const ownBudget = budgetTx.reduce((s, t) => s + (txNativeAmount(t) || 0), 0)
-            const totalIn = (transfersData?.incoming || []).reduce((s: number, t: any) => {
-              const amt = effectiveCurrency === 'CFA' ? t.amount_cfa : effectiveCurrency === 'USD' ? t.amount_usd : t.amount_eur
-              return s + Number(amt || 0)
-            }, 0)
-            const totalOut = (transfersData?.outgoing || []).reduce((s: number, t: any) => {
-              const amt = effectiveCurrency === 'CFA' ? t.amount_cfa : effectiveCurrency === 'USD' ? t.amount_usd : t.amount_eur
-              return s + Number(amt || 0)
-            }, 0)
-            effectiveBudget = ownBudget + totalIn - totalOut
+            const expenseTx = transactions.filter(t => t.type === 'expense')
+            const ownExpenses = expenseTx.reduce((s, t) => s + (txNativeAmount(t) || 0), 0)
+            effectiveBudget = ownBudget + (totalInVal ?? 0)
+            effectiveExpenses = ownExpenses + (totalOutVal ?? 0)
           }
         } catch { transfersData = undefined }
 
@@ -701,6 +788,9 @@ export function ExportDialog({ isOpen, onClose, mode = 'modal' }: ExportDialogPr
           members,
           transfers: transfersData,
           effectiveBudget,
+          effectiveExpenses,
+          totalIn: totalInVal,
+          totalOut: totalOutVal,
         })
       }
 
@@ -718,7 +808,7 @@ export function ExportDialog({ isOpen, onClose, mode = 'modal' }: ExportDialogPr
       <div className="space-y-2">
         <Label>Projet</Label>
         <Select value={selectedProjectId} onValueChange={setSelectedProjectId}>
-          <SelectTrigger>
+          <SelectTrigger className="w-full">
             <SelectValue placeholder="Sélectionner un projet" />
           </SelectTrigger>
           <SelectContent>

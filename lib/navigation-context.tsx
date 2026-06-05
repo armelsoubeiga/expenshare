@@ -12,6 +12,7 @@ export type AppPage =
   | { type: 'project-transfers'; projectId: number }
   | { type: 'export' }
   | { type: 'edit-transaction'; transactionId: number }
+  | { type: 'user-management' }
 
 interface NavigationContextType {
   currentPage: AppPage

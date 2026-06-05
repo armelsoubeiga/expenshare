@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -12,17 +12,41 @@ import { useGlobalStats, useRecentTransactions } from "@/hooks/use-database"
 import { CustomPieChart } from "@/components/charts/pie-chart"
 import { TransactionTable } from "@/components/ui/transaction-table"
 import { useNavigation } from "@/lib/navigation-context"
-
+import type { ProjectView } from "@/components/views/settings-view"
 
 const CURRENCIES: CurrencyCode[] = ["EUR", "CFA", "USD"]
+const ALL_VIEW_ID = "__all__"
 
 export function HomePage() {
   const { navigate } = useNavigation()
   const [showDetails, setShowDetails] = useState(true)
   const [displayCurrency, setDisplayCurrency] = useState<CurrencyCode>("EUR")
 
-  const { stats, isLoading: statsLoading, refetch: refetchStats } = useGlobalStats(displayCurrency)
-  const { transactions, isLoading: txLoading, refetch: refetchTx } = useRecentTransactions(10)
+  // ── Project views ──────────────────────────────────────────────────────────
+  const [views, setViews] = useState<ProjectView[]>([])
+  const [activeViewId, setActiveViewId] = useState<string>(ALL_VIEW_ID)
+
+  const activeView = useMemo(() => views.find(v => v.id === activeViewId) ?? null, [views, activeViewId])
+  const activeProjectIds = useMemo(() => activeView?.projectIds ?? undefined, [activeView])
+
+  const { stats, isLoading: statsLoading, refetch: refetchStats } = useGlobalStats(displayCurrency, activeProjectIds)
+  const { transactions, isLoading: txLoading, refetch: refetchTx } = useRecentTransactions(10, activeProjectIds)
+
+  // ── Load views ─────────────────────────────────────────────────────────────
+  const loadViews = async () => {
+    try {
+      const stored = localStorage.getItem("expenshare_user")
+      if (!stored) return
+      const user = JSON.parse(stored)
+      const saved = await db.settings.get(`user:${user.id}:project_views`)
+      if (saved?.value) {
+        const parsed = JSON.parse(saved.value) as ProjectView[]
+        setViews(parsed)
+        const defaultView = parsed.find(v => v.isDefault)
+        if (defaultView) setActiveViewId(defaultView.id)
+      }
+    } catch {}
+  }
 
   const persistCurrency = async (c: CurrencyCode) => {
     try {
@@ -46,6 +70,7 @@ export function HomePage() {
       } catch {}
     }
     loadCurrency()
+    void loadViews()
 
     const onCurrencyChanged = (e: Event) => {
       const ev = e as CustomEvent<{ currency?: string }>
@@ -53,13 +78,17 @@ export function HomePage() {
       refetchStats()
     }
     const onUpdated = () => { refetchStats(); refetchTx() }
+    const onViewsUpdated = () => { void loadViews() }
 
     window.addEventListener('expenshare:currency-changed', onCurrencyChanged)
     window.addEventListener('expenshare:project-updated', onUpdated)
+    window.addEventListener('expenshare:views-updated', onViewsUpdated)
     return () => {
       window.removeEventListener('expenshare:currency-changed', onCurrencyChanged)
       window.removeEventListener('expenshare:project-updated', onUpdated)
+      window.removeEventListener('expenshare:views-updated', onViewsUpdated)
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refetchStats, refetchTx])
 
   const fmtCurrency = (amount: number, currency: string) => {
@@ -67,6 +96,7 @@ export function HomePage() {
     return new Intl.NumberFormat("fr-FR", {
       style: "currency",
       currency,
+      currencyDisplay: 'narrowSymbol',
       minimumFractionDigits: isWhole ? 0 : 2,
       maximumFractionDigits: currency === 'XOF' ? 0 : 2,
     }).format(amount)
@@ -99,11 +129,46 @@ export function HomePage() {
 
   return (
     <div className="p-4 space-y-6 max-w-screen-2xl mx-auto">
+
+      {/* Sélecteur de vues — s'affiche uniquement si l'utilisateur a créé des vues */}
+      {views.length > 0 && (
+        <div className="flex items-center gap-2 overflow-x-auto pb-0.5 -mx-1 px-1 scrollbar-none">
+          <button
+            onClick={() => setActiveViewId(ALL_VIEW_ID)}
+            className={`flex-shrink-0 px-3.5 py-1.5 rounded-full text-xs font-medium transition-all border ${
+              activeViewId === ALL_VIEW_ID
+                ? "bg-primary text-primary-foreground border-primary"
+                : "border-border text-muted-foreground hover:border-primary/40 bg-card"
+            }`}
+          >
+            Tous
+          </button>
+          {views.map(v => (
+            <button
+              key={v.id}
+              onClick={() => setActiveViewId(v.id)}
+              className={`flex-shrink-0 flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-medium transition-all border ${
+                activeViewId === v.id
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "border-border text-muted-foreground hover:border-primary/40 bg-card"
+              }`}
+            >
+              <span>{v.emoji}</span>
+              <span>{v.name}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* En-tête */}
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-bold">Tableau de bord</h2>
-          <p className="text-sm text-muted-foreground">Vue d'ensemble de vos projets et activités</p>
+          <p className="text-sm text-muted-foreground">
+            {activeView
+              ? `Vue · ${activeView.emoji} ${activeView.name} · ${activeView.projectIds.length} projet${activeView.projectIds.length > 1 ? 's' : ''}`
+              : "Vue d'ensemble de vos projets et activités"}
+          </p>
         </div>
         <div className="flex flex-col items-end gap-1.5">
           <div className="flex items-center gap-2">

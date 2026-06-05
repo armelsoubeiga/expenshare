@@ -12,6 +12,7 @@ import { TransactionView } from "@/components/views/transaction-view"
 import { ProjectView } from "@/components/views/project-view"
 import { ChangePinView } from "@/components/views/change-pin-view"
 import { SettingsView } from "@/components/views/settings-view"
+import { UserManagementPage } from "@/components/settings/user-management"
 import { ProjectTransfersView } from "@/components/views/project-transfers-view"
 import { ExportView } from "@/components/views/export-view"
 import { EditTransactionView } from "@/components/views/edit-transaction-view"
@@ -111,6 +112,7 @@ function SubPageHeader({ currentPage, onBack }: { currentPage: AppPage; onBack: 
     'project-settings': 'Paramètres du projet',
     'change-pin': 'Changer le PIN',
     'settings': 'Paramètres',
+    'user-management': 'Gestion des membres',
     'project-transfers': 'Partage de budget',
     'export': 'Exporter les données',
     'edit-transaction': 'Modifier la transaction',
@@ -161,6 +163,7 @@ function PageContent({
 
   if (currentPage.type === 'change-pin') return <div className="animate-slide-in"><ChangePinView onBack={goBack} /></div>
   if (currentPage.type === 'settings') return <div className="animate-slide-in"><SettingsView onBack={goBack} /></div>
+  if (currentPage.type === 'user-management') return <div className="animate-slide-in"><UserManagementPage /></div>
   if (currentPage.type === 'project-transfers') return <div className="animate-slide-in"><ProjectTransfersView projectId={currentPage.projectId} onBack={goBack} /></div>
   if (currentPage.type === 'export') return <div className="animate-slide-in"><ExportView onBack={goBack} /></div>
   if (currentPage.type === 'edit-transaction') return (

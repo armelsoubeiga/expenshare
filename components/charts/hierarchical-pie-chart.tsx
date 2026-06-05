@@ -81,6 +81,9 @@ export function HierarchicalPieChart({ data, onCategoryClick, currency = "EUR" }
             {new Intl.NumberFormat("fr-FR", {
               style: "currency",
               currency,
+              currencyDisplay: 'narrowSymbol',
+              minimumFractionDigits: 0,
+              maximumFractionDigits: currency === 'XOF' ? 0 : 2,
             }).format(datum.value)}
           </p>
           {datum.children && datum.children.length > 0 && (
@@ -180,6 +183,9 @@ export function HierarchicalPieChart({ data, onCategoryClick, currency = "EUR" }
                   {new Intl.NumberFormat("fr-FR", {
                     style: "currency",
                     currency,
+                    currencyDisplay: 'narrowSymbol',
+                    minimumFractionDigits: 0,
+                    maximumFractionDigits: currency === 'XOF' ? 0 : 2,
                   }).format(entry.value)}
                 </p>
               </div>

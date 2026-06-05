@@ -135,7 +135,7 @@ export function InputPage({ navigate }: { navigate?: (page: AppPage) => void }) 
     const value = editDisplayCurrency === 'CFA' ? amountEur * editEurToCfa
       : editDisplayCurrency === 'USD' ? amountEur * editEurToUsd
       : amountEur
-    return new Intl.NumberFormat('fr-FR', { style: 'currency', currency, maximumFractionDigits: 0 }).format(value)
+    return new Intl.NumberFormat('fr-FR', { style: 'currency', currency, currencyDisplay: 'narrowSymbol', minimumFractionDigits: 0, maximumFractionDigits: currency === 'XOF' ? 0 : 2 }).format(value)
   }
 
   const openAddTransaction = (projectId?: number) => {

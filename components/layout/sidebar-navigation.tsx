@@ -5,7 +5,6 @@ import { Home, BarChart3, PlusCircle, LogOut, Settings, KeyRound, Users, Downloa
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { db } from "@/lib/database"
 import { useNavigation } from "@/lib/navigation-context"
-import { UserManagement } from "@/components/settings/user-management"
 import type { TabType } from "./main-layout"
 import type { ProjectUser } from "@/lib/types"
 
@@ -21,7 +20,6 @@ export function SidebarNavigation({ activeTab, onTabChange, onLogout, isSubPage,
   const { navigate, currentPage } = useNavigation()
   const [userName, setUserName] = useState("")
   const [isAdmin, setIsAdmin] = useState(false)
-  const [showUserMgmt, setShowUserMgmt] = useState(false)
   const [unreadCount, setUnreadCount] = useState(0)
   const [notifItems, setNotifItems] = useState<{ id: string; type: "expense" | "budget"; projectName?: string; userName: string; ts: number }[]>([])
   const [showNotif, setShowNotif] = useState(false)
@@ -164,7 +162,7 @@ export function SidebarNavigation({ activeTab, onTabChange, onLogout, isSubPage,
   const settingsItems = [
     { icon: KeyRound, label: "Changer le PIN", pageType: "change-pin", action: () => navigate({ type: "change-pin" }) },
     { icon: Settings, label: "Paramètres", pageType: "settings", action: () => navigate({ type: "settings" }) },
-    ...(isAdmin ? [{ icon: Users, label: "Utilisateurs", pageType: "__users__", action: () => setShowUserMgmt(true) }] : []),
+    ...(isAdmin ? [{ icon: Users, label: "Utilisateurs", pageType: "user-management", action: () => navigate({ type: "user-management" }) }] : []),
     { icon: Download, label: "Exporter", pageType: "export", action: () => navigate({ type: "export" }) },
   ]
 
@@ -312,7 +310,6 @@ export function SidebarNavigation({ activeTab, onTabChange, onLogout, isSubPage,
         </div>
       )}
 
-      <UserManagement isOpen={showUserMgmt} onClose={() => setShowUserMgmt(false)} />
     </>
   )
 }
