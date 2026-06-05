@@ -558,10 +558,11 @@ export function ExportDialog({ isOpen, onClose, mode = 'modal' }: ExportDialogPr
     })
 
     const tableStartY = chartY + 20
+    const txRows = transactions.slice(0, 200)
     autoTable(doc, {
       startY: tableStartY,
       head: [["Type", "Titre", "Montant", "Utilisateur", "Date"]],
-      body: transactions.slice(0, 200).map((transaction) => [
+      body: txRows.map((transaction) => [
         transaction.type === "expense" ? "Dépense" : "Budget",
         sanitizeText(transaction.title),
         `${formatAmountPdf(txNativeAmount(transaction), txCurrencyForRow(transaction))} ${
@@ -578,6 +579,18 @@ export function ExportDialog({ isOpen, onClose, mode = 'modal' }: ExportDialogPr
       ]),
       styles: { fontSize: 9 },
       headStyles: { fillColor: [33, 33, 33] },
+      columnStyles: {
+        4: { cellWidth: 76 },
+      },
+      didParseCell: (data: any) => {
+        if (data.section !== 'body') return
+        const tx = txRows[data.row.index]
+        if (!tx) return
+        if (tx.type === 'budget') {
+          data.cell.styles.textColor = [22, 130, 74]
+          if (data.column.index === 0) data.cell.styles.fontStyle = 'bold'
+        }
+      },
       theme: "striped",
       margin: { left: margin, right: margin },
     })
@@ -608,7 +621,6 @@ export function ExportDialog({ isOpen, onClose, mode = 'modal' }: ExportDialogPr
             sanitizeText(t.source_name || `Projet #${t.source_project_id}`),
             `+${formatAmountPdf(Number(amt), projectCurrency)} ${currencySymbol}`,
             t.created_at ? formatDate(t.created_at) : '',
-            sanitizeText(t.note || '-'),
           ],
           isIncoming: true,
         })
@@ -621,7 +633,6 @@ export function ExportDialog({ isOpen, onClose, mode = 'modal' }: ExportDialogPr
             sanitizeText(t.target_name || `Projet #${t.target_project_id}`),
             `-${formatAmountPdf(Number(amt), projectCurrency)} ${currencySymbol}`,
             t.created_at ? formatDate(t.created_at) : '',
-            sanitizeText(t.note || '-'),
           ],
           isIncoming: false,
         })
@@ -629,16 +640,15 @@ export function ExportDialog({ isOpen, onClose, mode = 'modal' }: ExportDialogPr
 
       autoTable(doc, {
         startY: tY + 6,
-        head: [['Sens', 'Projet lie', 'Montant', 'Date', 'Note']],
+        head: [['Sens', 'Projet lie', 'Montant', 'Date']],
         body: transferRows.map(r => r.cells),
         styles: { fontSize: 9 },
         headStyles: { fillColor: [60, 90, 180], textColor: [255, 255, 255], fontStyle: 'bold' },
         columnStyles: {
-          0: { fontStyle: 'bold', cellWidth: 52 },
-          1: { cellWidth: 130 },
-          2: { halign: 'right', cellWidth: 110 },
-          3: { cellWidth: 68 },
-          4: { cellWidth: 'auto' },
+          0: { fontStyle: 'bold', cellWidth: 60 },
+          1: { cellWidth: 'auto' },
+          2: { halign: 'right', cellWidth: 120 },
+          3: { cellWidth: 90, overflow: 'linebreak' },
         },
         didParseCell: (data: any) => {
           if (data.section !== 'body') return
@@ -653,39 +663,6 @@ export function ExportDialog({ isOpen, onClose, mode = 'modal' }: ExportDialogPr
         theme: 'striped',
         margin: { left: margin, right: margin },
       })
-
-      // Récapitulatif après le tableau
-      let sumY = (doc as any).lastAutoTable?.finalY ?? tY + 80
-      sumY += 10
-      if (sumY + 50 > pageHeight - margin) { doc.addPage(); sumY = margin + 10 }
-
-      const totalInAmt = (transfers.incoming || []).reduce((s: number, t: any) => {
-        const amt = effectiveCurrency === 'CFA' ? t.amount_cfa : effectiveCurrency === 'USD' ? t.amount_usd : t.amount_eur
-        return s + Number(amt || 0)
-      }, 0)
-      const totalOutAmt = (transfers.outgoing || []).reduce((s: number, t: any) => {
-        const amt = effectiveCurrency === 'CFA' ? t.amount_cfa : effectiveCurrency === 'USD' ? t.amount_usd : t.amount_eur
-        return s + Number(amt || 0)
-      }, 0)
-
-      const summaryX = pageWidth - margin - 200
-      doc.setFillColor(245, 245, 252)
-      doc.roundedRect(summaryX, sumY, 200, 52, 6, 6, 'F')
-      doc.setFont("helvetica", "normal")
-      doc.setFontSize(9)
-      if (totalInAmt > 0) {
-        doc.setTextColor(22, 130, 74)
-        doc.text(`Budget recu :  +${formatAmountPdf(totalInAmt, projectCurrency)} ${currencySymbol}`, summaryX + 10, sumY + 14)
-      }
-      if (totalOutAmt > 0) {
-        doc.setTextColor(200, 60, 20)
-        doc.text(`Budget envoye :  -${formatAmountPdf(totalOutAmt, projectCurrency)} ${currencySymbol}`, summaryX + 10, sumY + 28)
-      }
-      if (options?.effectiveBudget != null) {
-        doc.setFont("helvetica", "bold")
-        doc.setTextColor(20, 20, 20)
-        doc.text(`Budget effectif :  ${formatAmountPdf(options.effectiveBudget, projectCurrency)} ${currencySymbol}`, summaryX + 10, sumY + 44)
-      }
     }
 
     const blob = doc.output("blob") as Blob

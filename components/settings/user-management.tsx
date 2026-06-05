@@ -114,21 +114,23 @@ function SubTabBar({ active, onChange }: SubTabBarProps) {
     { id: "activite", label: "Activité", icon: <Activity className="w-4 h-4" /> },
   ]
   return (
-    <div className="flex gap-1 bg-muted rounded-xl p-1 mb-6">
-      {tabs.map(t => (
-        <button
-          key={t.id}
-          onClick={() => onChange(t.id)}
-          className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-sm font-medium transition-all ${
-            active === t.id
-              ? "bg-background text-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          {t.icon}
-          {t.label}
-        </button>
-      ))}
+    <div className="border-b border-border mb-6">
+      <div className="flex">
+        {tabs.map(t => (
+          <button
+            key={t.id}
+            onClick={() => onChange(t.id)}
+            className={`flex items-center gap-2 px-5 py-3 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap ${
+              active === t.id
+                ? "border-primary text-primary"
+                : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
+            }`}
+          >
+            {t.icon}
+            {t.label}
+          </button>
+        ))}
+      </div>
     </div>
   )
 }
