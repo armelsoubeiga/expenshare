@@ -877,7 +877,7 @@ class TursoDatabase {
 
         const r = await turso.execute({
           sql: 'INSERT INTO transactions (project_id, user_id, category_id, type, amount, amount_eur, amount_cfa, amount_usd, title, description, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id',
-          args: [basePayload.project_id, basePayload.user_id, basePayload.category_id, data.type, amount_eur, amount_eur, amount_cfa, amount_usd, data.title, data.description ?? null, new Date().toISOString()],
+          args: [basePayload.project_id, basePayload.user_id, basePayload.category_id, data.type, inputAmount, amount_eur, amount_cfa, amount_usd, data.title, data.description ?? null, new Date().toISOString()],
         })
         const rowId = r.rows[0] ? rowToObj(r.rows[0], r.columns).id : undefined
         const id = (rowId != null && !Number.isNaN(Number(rowId)))
@@ -979,7 +979,7 @@ class TursoDatabase {
 
       await turso.execute({
         sql: 'UPDATE transactions SET amount = ?, amount_eur = ?, amount_cfa = ?, amount_usd = ?, category_id = ?, title = ?, description = ? WHERE id = ?',
-        args: [r2(amount_eur), r2(amount_eur), r0(amount_cfa), r2(amount_usd), data.category_id, data.title, data.description || null, id],
+        args: [r2(amt), r2(amount_eur), r0(amount_cfa), r2(amount_usd), data.category_id, data.title, data.description || null, id],
       })
 
       if (typeof window !== 'undefined') {
