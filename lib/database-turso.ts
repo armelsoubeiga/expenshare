@@ -41,8 +41,18 @@ class TursoDatabase {
     }
   }
 
+  private async isSuperAdmin(userId: string): Promise<boolean> {
+    const superAdminId = await this.getAdminUserId()
+    return superAdminId !== null && userId === superAdminId
+  }
+
   private async getAuthorizedProjectIds(userId: string): Promise<number[]> {
     try {
+      // Le super admin (premier admin créé) voit tous les projets silencieusement, sans membership
+      if (await this.isSuperAdmin(userId)) {
+        const all = await turso.execute({ sql: 'SELECT id FROM projects', args: [] })
+        return rowsToObjs(all).map((r) => Number(r.id))
+      }
       const [created, memberships] = await Promise.all([
         turso.execute({ sql: 'SELECT id FROM projects WHERE created_by = ?', args: [userId] }),
         turso.execute({ sql: 'SELECT project_id FROM project_users WHERE user_id = ?', args: [userId] }),
